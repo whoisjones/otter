@@ -149,8 +149,7 @@ def main():
     )
     
     if training_args.do_train:
-        config_save_path = Path(training_args.output_dir) / "config.json"
-        config.save_pretrained(str(config_save_path))
+        config.save_pretrained(Path(training_args.output_dir))
         final_step = train(
             model=model,
             train_dataloader=train_dataloader,

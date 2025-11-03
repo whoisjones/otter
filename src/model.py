@@ -159,11 +159,18 @@ class SpanModel(PreTrainedModel):
         # Initialize model with config
         model = cls(config)
         
-        # Load token and type encoder models
-        model.token_encoder = AutoModel.from_pretrained(str(path / "token_encoder"))
-        model.type_encoder = AutoModel.from_pretrained(str(path / "type_encoder"))
+        # Load token and type encoder models (matching __init__ with add_pooling_layer=False)
+        token_config = AutoConfig.from_pretrained(model.config.token_encoder)
+        type_config = AutoConfig.from_pretrained(model.config.type_encoder)
+        model.token_encoder = AutoModel.from_pretrained(str(path / "token_encoder"), config=token_config, add_pooling_layer=False)
+        model.type_encoder = AutoModel.from_pretrained(str(path / "type_encoder"), config=type_config, add_pooling_layer=False)
         
-        # Load model state dict
-        model.load_state_dict(torch.load(path / "model.pt", map_location="cpu"))
+        # Load model state dict, filtering out pooling layer keys since encoders are loaded without pooling
+        state_dict = torch.load(path / "model.pt", map_location="cpu")
+        # Filter out pooling layer keys that don't exist in the model structure
+        model_state_keys = set(model.state_dict().keys())
+        filtered_state_dict = {k: v for k, v in state_dict.items() 
+                              if k in model_state_keys}
+        model.load_state_dict(filtered_state_dict, strict=False)
         
         return model
