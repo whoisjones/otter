@@ -34,6 +34,18 @@ class ModelArguments:
     type_encoder_pooling: str = field(
         default="cls", metadata={"help": "Pooling method for type encoder. Options: 'cls' (uses CLS token) or 'mean' (mean pooling)."}
     )
+    prediction_threshold: float = field(
+        default=0.4,
+        metadata={
+            "help": "Threshold for span predictions (lower = higher recall, higher = higher precision). Default 0.4."
+        },
+    )
+    positive_class_weight: float = field(
+        default=2.0,
+        metadata={
+            "help": "Weight for positive examples in loss (higher = more focus on recall). Default 2.0."
+        },
+    )
 
 
 @dataclass

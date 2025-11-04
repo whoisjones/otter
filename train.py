@@ -72,14 +72,15 @@ def main():
         start_loss_weight=model_args.start_loss_weight,
         end_loss_weight=model_args.end_loss_weight,
         span_loss_weight=model_args.span_loss_weight,
-        type_encoder_pooling=model_args.type_encoder_pooling
+        type_encoder_pooling=model_args.type_encoder_pooling,
+        positive_class_weight=model_args.positive_class_weight,
+        prediction_threshold=model_args.prediction_threshold
     )
     model = SpanModel(config=config)
 
     token_encoder_tokenizer = AutoTokenizer.from_pretrained(config.token_encoder)
-    in_batch_collator = InBatchDataCollator(token_encoder_tokenizer, max_seq_length=data_args.max_seq_length, format=data_args.annotation_format)
-    if training_args.do_eval or training_args.do_predict:
-        type_encoder_tokenizer = AutoTokenizer.from_pretrained(config.type_encoder)
+    type_encoder_tokenizer = AutoTokenizer.from_pretrained(config.type_encoder)
+    in_batch_collator = InBatchDataCollator(token_encoder_tokenizer, type_encoder_tokenizer, max_seq_length=data_args.max_seq_length, format=data_args.annotation_format)
 
     if training_args.do_train:
         if "train" not in dataset:
