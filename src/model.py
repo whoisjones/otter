@@ -49,8 +49,8 @@ class SpanModel(PreTrainedModel):
         self.span_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
         self.post_init()
 
-        self.token_encoder = AutoModel.from_pretrained(config.token_encoder, config=token_config, add_pooling_layer=False)
-        self.type_encoder = AutoModel.from_pretrained(config.type_encoder, config=type_config, add_pooling_layer=False)
+        self.token_encoder = AutoModel.from_pretrained(config.token_encoder, config=token_config)
+        self.type_encoder = AutoModel.from_pretrained(config.type_encoder, config=type_config)
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -133,9 +133,21 @@ class SpanModel(PreTrainedModel):
         span_scores = span_scores.permute(0, 3, 1, 2)
 
         if labels is not None:
-            start_loss = (F.binary_cross_entropy_with_logits(start_scores, labels["start_labels"], reduction="none") * labels["start_loss_mask"]).mean()
-            end_loss = (F.binary_cross_entropy_with_logits(end_scores, labels["end_labels"], reduction="none") * labels["end_loss_mask"]).mean()
-            span_loss = (F.binary_cross_entropy_with_logits(span_scores, labels["span_labels"], reduction="none") * labels["span_loss_mask"]).mean()
+            pos_weight = torch.tensor(self.config.positive_class_weight, device=start_scores.device)
+            start_loss = F.binary_cross_entropy_with_logits(
+                start_scores, labels["start_labels"], pos_weight=pos_weight, reduction="none"
+            )
+            start_loss = (start_loss * labels["start_loss_mask"]).sum() / labels["start_loss_mask"].sum()
+
+            end_loss = F.binary_cross_entropy_with_logits(
+                end_scores, labels["end_labels"], pos_weight=pos_weight, reduction="none"
+            )
+            end_loss = (end_loss * labels["end_loss_mask"]).sum() / labels["end_loss_mask"].sum()
+
+            span_loss = F.binary_cross_entropy_with_logits(
+                span_scores, labels["span_labels"], pos_weight=pos_weight, reduction="none"
+            )
+            span_loss = (span_loss * labels["span_loss_mask"]).sum() / labels["span_loss_mask"].sum()
             loss = self.config.start_loss_weight * start_loss + self.config.end_loss_weight * end_loss + self.config.span_loss_weight * span_loss
             return SpanModelOutput(loss=loss, start_logits=start_scores, end_logits=end_scores, span_logits=span_scores)
         else:
