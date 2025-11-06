@@ -4,6 +4,7 @@
   "type_encoder": "bert-base-uncased",
   "dataset_name": "conll2003",
   "annotation_format": "text",
+  "loss_masking": "subwords",
   "train_file": "/vol/tmp/goldejon/ner/data/conll2003/train.jsonl",
   "validation_file": "/vol/tmp/goldejon/ner/data/conll2003/validation.jsonl",
   "test_file": "/vol/tmp/goldejon/ner/data/conll2003/test.jsonl",

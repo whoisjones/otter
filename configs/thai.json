@@ -3,11 +3,12 @@
   "token_encoder": "xlm-roberta-base",
   "type_encoder": "xlm-roberta-base",
   "dataset_name": "thainer",
-  "annotation_format": "tokens",
+  "annotation_format": "text",
+  "loss_masking": "none",
   "train_file": "/vol/tmp/goldejon/ner/data/thainer/train.jsonl",
   "validation_file": "/vol/tmp/goldejon/ner/data/thainer/validation.jsonl",
   "test_file": "/vol/tmp/goldejon/ner/data/thainer/test.jsonl",
-  "output_dir": "/vol/tmp/goldejon/ner/thainer-tokens",
+  "output_dir": "/vol/tmp/goldejon/ner/thainer-text-nomask-pos",
   "per_device_train_batch_size": 6,
   "per_device_eval_batch_size": 6,
   "learning_rate": 5e-05,
@@ -30,6 +31,6 @@
   "do_eval": true,
   "do_predict": true,
   "prediction_threshold": 0.5,
-  "use_pos_weight": false
+  "use_pos_weight": true
 }
 

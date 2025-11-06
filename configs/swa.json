@@ -4,6 +4,7 @@
   "type_encoder": "xlm-roberta-base",
   "dataset_name": "masakhaner",
   "annotation_format": "text",
+  "loss_masking": "subwords",
   "train_file": "/vol/tmp/goldejon/ner/data/masakhaner/swa/train.jsonl",
   "validation_file": "/vol/tmp/goldejon/ner/data/masakhaner/swa/validation.jsonl",
   "test_file": "/vol/tmp/goldejon/ner/data/masakhaner/swa/test.jsonl",
