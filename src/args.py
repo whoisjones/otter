@@ -97,6 +97,12 @@ class DataTrainingArguments:
             "help": "The format of the annotation. Can be 'text' or 'tokens'."
         },
     )
+    loss_masking: str = field(
+        default='none',
+        metadata={
+            "help": "The method to mask the loss. Can be 'none', 'all_spans' or 'subwords'."
+        },
+    )
 
     def __post_init__(self):
         if (

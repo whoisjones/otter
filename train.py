@@ -80,7 +80,13 @@ def main():
 
     token_encoder_tokenizer = AutoTokenizer.from_pretrained(config.token_encoder)
     type_encoder_tokenizer = AutoTokenizer.from_pretrained(config.type_encoder)
-    in_batch_collator = InBatchDataCollator(token_encoder_tokenizer, type_encoder_tokenizer, max_seq_length=data_args.max_seq_length, format=data_args.annotation_format)
+    in_batch_collator = InBatchDataCollator(
+        token_encoder_tokenizer, 
+        type_encoder_tokenizer, 
+        max_seq_length=data_args.max_seq_length, 
+        format=data_args.annotation_format,
+        loss_masking=data_args.loss_masking
+    )
 
     if training_args.do_train:
         if "train" not in dataset:
@@ -110,7 +116,8 @@ def main():
             type_encodings=type_encodings,
             label2id=label2id,
             max_seq_length=data_args.max_seq_length, 
-            format=data_args.annotation_format
+            format=data_args.annotation_format,
+            loss_masking=data_args.loss_masking
         )
         eval_dataloader = DataLoader(
             dataset["validation"],
@@ -137,7 +144,8 @@ def main():
             type_encodings=type_encodings,
             label2id=label2id,
             max_seq_length=data_args.max_seq_length, 
-            format=data_args.annotation_format
+            format=data_args.annotation_format,
+            loss_masking=data_args.loss_masking
         )
         test_dataloader = DataLoader(
             dataset["test"],

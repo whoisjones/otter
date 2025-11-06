@@ -1,14 +1,68 @@
 import torch
 
+def all_spans_mask(input_ids, sequence_ids):
+    text_start_index = 0
+    while sequence_ids[text_start_index] == None:
+        text_start_index += 1
+
+    text_end_index = len(input_ids) - 1
+    while sequence_ids[text_end_index] == None:
+        text_end_index -= 1
+
+    start_mask, end_mask = [], []
+    for sequence_id in sequence_ids:
+        start_mask.append(1 if sequence_id is not None else 0)
+        end_mask.append(1 if sequence_id is not None else 0)
+
+    span_mask = [
+        [
+            (j - i >= 0) * s * e for j, e in enumerate(end_mask)
+        ]
+        for i, s in enumerate(start_mask)
+    ]
+
+    return text_start_index, text_end_index, start_mask, end_mask, span_mask
+
+def subwords_mask(input_ids, word_ids):
+    text_start_index = 0
+    while word_ids[text_start_index] == None:
+        text_start_index += 1
+
+    text_end_index = len(input_ids) - 1
+    while word_ids[text_end_index] == None:
+        text_end_index -= 1
+
+    start_mask, end_mask = [], []
+    previous_word_id = None
+    for idx, word_id in enumerate(word_ids):
+        if word_id is not None:
+            start_mask.append(1 if word_id != previous_word_id else 0)
+            end_mask.append(1 if (idx + 1 == len(word_ids) or word_ids[idx + 1] != word_id) else 0)
+        else:
+            start_mask.append(0)
+            end_mask.append(0)
+        previous_word_id = word_id
+
+    span_mask = [
+        [
+            (j - i >= 0) * s * e for j, e in enumerate(end_mask)
+        ]
+        for i, s in enumerate(start_mask)
+    ]
+
+    return text_start_index, text_end_index, start_mask, end_mask, span_mask
 
 class InBatchDataCollator:
-    def __init__(self, token_encoder_tokenizer, type_encoder_tokenizer, max_seq_length=512, max_span_length=30, format='text'):
+    def __init__(self, token_encoder_tokenizer, type_encoder_tokenizer, max_seq_length=512, max_span_length=30, format='text', loss_masking='none'):
         self.token_encoder_tokenizer = token_encoder_tokenizer
         self.type_encoder_tokenizer = type_encoder_tokenizer
         self.max_seq_length = max_seq_length
         self.max_span_length = max_span_length
         self.format = format
-    
+        self.loss_masking = loss_masking
+        if loss_masking not in ['none', 'subwords']:
+            raise ValueError(f"Invalid loss masking: {loss_masking}")
+
     def __call__(self, batch):
         if self.format == 'text':
             texts = [sample['text'] for sample in batch]
@@ -61,36 +115,14 @@ class InBatchDataCollator:
 
         for i in range(len(token_encodings['input_ids'])):
             sample_labels = batch[i]["token_spans" if self.format == 'tokens' else "char_spans"]
-
             input_ids = token_encodings['input_ids'][i]
-            word_ids = token_encodings.word_ids(i)
-            
-            text_start_index = 0
-            while word_ids[text_start_index] == None:
-                text_start_index += 1
 
-            text_end_index = len(input_ids) - 1
-            while word_ids[text_end_index] == None:
-                text_end_index -= 1
-
-            # For each offset, set start_mask to 1 if it's the first occurrence of a word_id, and end_mask to 1 if it's the last occurrence of that word_id
-            start_mask, end_mask = [], []
-            previous_word_id = None
-            for idx, word_id in enumerate(word_ids):
-                if word_id is not None:
-                    start_mask.append(1 if word_id != previous_word_id else 0)
-                    end_mask.append(1 if (idx + 1 == len(word_ids) or word_ids[idx + 1] != word_id) else 0)
-                else:
-                    start_mask.append(0)
-                    end_mask.append(0)
-                previous_word_id = word_id
-
-            span_mask = [
-                [
-                    (j - i >= 0) * s * e for j, e in enumerate(end_mask)
-                ]
-                for i, s in enumerate(start_mask)
-            ]
+            if self.loss_masking == 'subwords':
+                word_ids = token_encodings.word_ids(i)
+                text_start_index, text_end_index, start_mask, end_mask, span_mask = subwords_mask(input_ids, word_ids)
+            else:
+                sequence_ids = token_encodings.sequence_ids(i)
+                text_start_index, text_end_index, start_mask, end_mask, span_mask = all_spans_mask(input_ids, sequence_ids)
 
             start_loss_mask = torch.tensor([start_mask[:] for _ in unique_types])
             end_loss_mask = torch.tensor([end_mask[:] for _ in unique_types])
@@ -126,6 +158,7 @@ class InBatchDataCollator:
                         })
 
                 elif self.format == 'tokens':
+                    word_ids = token_encodings.word_ids(i)
                     if label["start"] in word_ids and label["end"] - 1 in word_ids:
                         start_label_index, end_label_index = text_start_index, text_end_index
                         while start_label_index <= text_end_index and word_ids[start_label_index] != label["start"]:
@@ -171,7 +204,7 @@ class InBatchDataCollator:
         return batch
 
 class AllLabelsDataCollator:
-    def __init__(self, tokenizer, type_encodings, label2id, max_seq_length=512, max_span_length=30, format='text'):
+    def __init__(self, tokenizer, type_encodings, label2id, max_seq_length=512, max_span_length=30, format='text', loss_masking='none'):
         self.tokenizer = tokenizer
         self.type_input_ids = type_encodings["input_ids"]
         self.type_attention_mask = type_encodings["attention_mask"]
@@ -180,7 +213,10 @@ class AllLabelsDataCollator:
         self.max_seq_length = max_seq_length
         self.max_span_length = max_span_length
         self.format = format
-    
+        self.loss_masking = loss_masking
+        if loss_masking not in ['none', 'subwords']:
+            raise ValueError(f"Invalid loss masking: {loss_masking}")
+
     def __call__(self, batch):
         if self.format == 'text':
             texts = [sample['text'] for sample in batch]
@@ -214,36 +250,14 @@ class AllLabelsDataCollator:
 
         for i in range(len(token_encodings['input_ids'])):
             sample_labels = batch[i]["token_spans" if self.format == 'tokens' else "char_spans"]
-
             input_ids = token_encodings['input_ids'][i]
-            word_ids = token_encodings.word_ids(i)
-            
-            text_start_index = 0
-            while word_ids[text_start_index] == None:
-                text_start_index += 1
 
-            text_end_index = len(input_ids) - 1
-            while word_ids[text_end_index] == None:
-                text_end_index -= 1
-
-            # For each offset, set start_mask to 1 if it's the first occurrence of a word_id, and end_mask to 1 if it's the last occurrence of that word_id
-            start_mask, end_mask = [], []
-            previous_word_id = None
-            for idx, word_id in enumerate(word_ids):
-                if word_id is not None:
-                    start_mask.append(1 if word_id != previous_word_id else 0)
-                    end_mask.append(1 if (idx + 1 == len(word_ids) or word_ids[idx + 1] != word_id) else 0)
-                else:
-                    start_mask.append(0)
-                    end_mask.append(0)
-                previous_word_id = word_id
-
-            span_mask = [
-                [
-                    (j - i >= 0) * s * e for j, e in enumerate(end_mask)
-                ]
-                for i, s in enumerate(start_mask)
-            ]
+            if self.loss_masking == 'subwords':
+                word_ids = token_encodings.word_ids(i)
+                text_start_index, text_end_index, start_mask, end_mask, span_mask = subwords_mask(input_ids, word_ids)
+            else:
+                sequence_ids = token_encodings.sequence_ids(i)
+                text_start_index, text_end_index, start_mask, end_mask, span_mask = all_spans_mask(input_ids, sequence_ids)
 
             start_loss_mask = torch.tensor([start_mask[:] for _ in range(len(self.label2id))])
             end_loss_mask = torch.tensor([end_mask[:] for _ in range(len(self.label2id))])
@@ -279,6 +293,7 @@ class AllLabelsDataCollator:
                         })
 
                 elif self.format == 'tokens':
+                    word_ids = token_encodings.word_ids(i)
                     if label["start"] in word_ids and label["end"] - 1 in word_ids:
                         start_label_index, end_label_index = text_start_index, text_end_index
                         while start_label_index <= text_end_index and word_ids[start_label_index] != label["start"]:
