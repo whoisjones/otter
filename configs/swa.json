@@ -7,10 +7,10 @@
   "train_file": "/vol/tmp/goldejon/ner/data/masakhaner/swa/train.jsonl",
   "validation_file": "/vol/tmp/goldejon/ner/data/masakhaner/swa/validation.jsonl",
   "test_file": "/vol/tmp/goldejon/ner/data/masakhaner/swa/test.jsonl",
-  "output_dir": "/vol/tmp/goldejon/ner/masakhaner/swa",
+  "output_dir": "/vol/tmp/goldejon/ner/masakhaner-swa-pos-weight",
   "per_device_train_batch_size": 8,
   "per_device_eval_batch_size": 8,
-  "learning_rate": 3e-05,
+  "learning_rate": 5e-05,
   "max_steps": 3000,
   "eval_steps": 500,
   "max_seq_length": 512,
@@ -20,9 +20,9 @@
   "dropout": 0.1,
   "linear_hidden_size": 128,
   "init_temperature": 0.03,
-  "start_loss_weight": 0.2,
-  "end_loss_weight": 0.2,
-  "span_loss_weight": 0.6,
+  "start_loss_weight": 0.15,
+  "end_loss_weight": 0.15,
+  "span_loss_weight": 0.7,
   "save_total_limit": 2,
   "type_encoder_pooling": "mean",
   "fp16": true,
@@ -30,6 +30,6 @@
   "do_eval": true,
   "do_predict": true,
   "prediction_threshold": 0.5,
-  "positive_class_weight": 10.0
+  "use_pos_weight": true
 }
 
