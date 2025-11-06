@@ -60,6 +60,8 @@ class InBatchDataCollator:
         }
 
         for i in range(len(token_encodings['input_ids'])):
+            sample_labels = batch[i]["token_spans" if self.format == 'tokens' else "char_spans"]
+
             input_ids = token_encodings['input_ids'][i]
             word_ids = token_encodings.word_ids(i)
             
@@ -94,7 +96,6 @@ class InBatchDataCollator:
             end_loss_mask = torch.tensor([end_mask[:] for _ in unique_types])
             span_loss_mask = torch.tensor([[x[:] for x in span_mask] for _ in unique_types])
 
-            sample_labels = batch[i]["token_spans" if self.format == 'tokens' else "char_spans"]
             start_labels = torch.zeros(len(unique_types), len(input_ids))
             end_labels = torch.zeros(len(unique_types), len(input_ids))
             span_labels = torch.zeros(len(unique_types), len(input_ids), len(input_ids))
@@ -150,6 +151,9 @@ class InBatchDataCollator:
         annotations["end_loss_mask"] = torch.stack(annotations["end_loss_mask"], dim=0)
         annotations["span_labels"] = torch.stack(annotations["span_labels"], dim=0)
         annotations["span_loss_mask"] = torch.stack(annotations["span_loss_mask"], dim=0)
+        annotations["start_loss_weight"] = (annotations["start_loss_mask"].sum() / annotations["start_labels"].sum())
+        annotations["end_loss_weight"] = (annotations["end_loss_mask"].sum() / annotations["end_labels"].sum())
+        annotations["span_loss_weight"] = (annotations["span_loss_mask"].sum() / annotations["span_labels"].sum())
 
         batch = {
             "token_input_ids": token_encodings["input_ids"],
@@ -209,6 +213,8 @@ class AllLabelsDataCollator:
         }
 
         for i in range(len(token_encodings['input_ids'])):
+            sample_labels = batch[i]["token_spans" if self.format == 'tokens' else "char_spans"]
+
             input_ids = token_encodings['input_ids'][i]
             word_ids = token_encodings.word_ids(i)
             
@@ -243,7 +249,6 @@ class AllLabelsDataCollator:
             end_loss_mask = torch.tensor([end_mask[:] for _ in range(len(self.label2id))])
             span_loss_mask = torch.tensor([[x[:] for x in span_mask] for _ in range(len(self.label2id))])
 
-            sample_labels = batch[i]["token_spans" if self.format == 'tokens' else "char_spans"]
             start_labels = torch.zeros(len(self.label2id), len(input_ids))
             end_labels = torch.zeros(len(self.label2id), len(input_ids))
             span_labels = torch.zeros(len(self.label2id), len(input_ids), len(input_ids))
@@ -289,7 +294,7 @@ class AllLabelsDataCollator:
                         annotation.append({
                             "start": start_label_index,
                             "end": end_label_index,
-                            "label": self.label2id[label["label"]]
+                            "label": label["label"]
                         })
 
             annotations["ner"].append(annotation)
