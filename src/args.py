@@ -40,10 +40,10 @@ class ModelArguments:
             "help": "Threshold for span predictions (lower = higher recall, higher = higher precision). Default 0.4."
         },
     )
-    positive_class_weight: float = field(
-        default=2.0,
+    use_pos_weight: bool = field(
+        default=True,
         metadata={
-            "help": "Weight for positive examples in loss (higher = more focus on recall). Default 2.0."
+            "help": "Whether to use positive class weight in loss. Default True."
         },
     )
 

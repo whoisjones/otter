@@ -16,7 +16,7 @@ class SpanModelConfig(PretrainedConfig):
         dropout: float = 0.1,
         init_temperature: float = 0.07,
         type_encoder_pooling: str = "cls",
-        positive_class_weight: float = 1.0,
+        use_pos_weight: bool = True,
         prediction_threshold: float = 0.4,
         **kwargs
     ):
@@ -28,5 +28,5 @@ class SpanModelConfig(PretrainedConfig):
         self.linear_hidden_size = linear_hidden_size
         self.init_temperature = init_temperature
         self.type_encoder_pooling = type_encoder_pooling
-        self.positive_class_weight = positive_class_weight
+        self.use_pos_weight = use_pos_weight
         self.prediction_threshold = prediction_threshold

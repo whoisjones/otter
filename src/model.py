@@ -133,19 +133,27 @@ class SpanModel(PreTrainedModel):
         span_scores = span_scores.permute(0, 3, 1, 2)
 
         if labels is not None:
-            pos_weight = torch.tensor(self.config.positive_class_weight, device=start_scores.device)
             start_loss = F.binary_cross_entropy_with_logits(
-                start_scores, labels["start_labels"], pos_weight=pos_weight, reduction="none"
+                start_scores, 
+                labels["start_labels"], 
+                pos_weight=labels["start_loss_weight"] if self.config.use_pos_weight and self.training else None, 
+                reduction="none"
             )
             start_loss = (start_loss * labels["start_loss_mask"]).sum() / labels["start_loss_mask"].sum()
 
             end_loss = F.binary_cross_entropy_with_logits(
-                end_scores, labels["end_labels"], pos_weight=pos_weight, reduction="none"
+                end_scores,
+                labels["end_labels"], 
+                pos_weight=labels["end_loss_weight"] if self.config.use_pos_weight and self.training else None, 
+                reduction="none"
             )
             end_loss = (end_loss * labels["end_loss_mask"]).sum() / labels["end_loss_mask"].sum()
 
             span_loss = F.binary_cross_entropy_with_logits(
-                span_scores, labels["span_labels"], pos_weight=pos_weight, reduction="none"
+                span_scores, 
+                labels["span_labels"], 
+                pos_weight=labels["span_loss_weight"] if self.config.use_pos_weight and self.training else None, 
+                reduction="none"
             )
             span_loss = (span_loss * labels["span_loss_mask"]).sum() / labels["span_loss_mask"].sum()
             loss = self.config.start_loss_weight * start_loss + self.config.end_loss_weight * end_loss + self.config.span_loss_weight * span_loss
