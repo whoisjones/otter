@@ -65,6 +65,9 @@ def main():
     config = SpanModelConfig(
         token_encoder=model_args.token_encoder,
         type_encoder=model_args.type_encoder,
+        loss_fn=model_args.loss_fn,
+        focal_alpha=model_args.focal_alpha,
+        focal_gamma=model_args.focal_gamma,
         max_span_length=data_args.max_span_length,
         dropout=model_args.dropout,
         linear_hidden_size=model_args.linear_hidden_size,
@@ -73,7 +76,6 @@ def main():
         end_loss_weight=model_args.end_loss_weight,
         span_loss_weight=model_args.span_loss_weight,
         type_encoder_pooling=model_args.type_encoder_pooling,
-        use_pos_weight=model_args.use_pos_weight,
         prediction_threshold=model_args.prediction_threshold
     )
     model = SpanModel(config=config)
