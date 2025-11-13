@@ -21,8 +21,8 @@ class SpanModelOutput(ModelOutput):
 def mlp(input_size, output_size, dropout):
     return nn.Sequential(
         nn.Linear(input_size, output_size),
-        nn.ReLU(),
         nn.Dropout(dropout),
+        nn.ReLU(),
         nn.Linear(output_size, output_size),
     )
 
@@ -110,9 +110,6 @@ class SpanModel(PreTrainedModel):
         type_end_output = F.normalize(self.dropout(self.type_end_linear(type_output)), dim=-1)
         type_span_output = F.normalize(self.dropout(self.type_span_linear(type_output)), dim=-1)
 
-        start_scores = self.start_logit_scale.exp() * torch.einsum("BSH,CH->BCS", token_start_output, type_start_output)
-        end_scores = self.end_logit_scale.exp() * torch.einsum("BSH,CH->BCS", token_end_output, type_end_output)
-        
         # batch_size x seq_length x seq_length x hidden_size * 2
         span_hidden = torch.cat(
             [
@@ -136,10 +133,9 @@ class SpanModel(PreTrainedModel):
             self.dropout(self.token_span_linear(concat_span_outputs)), dim=-1
         )
 
-        # token_span_output: [batch_size, seq_length, seq_length, hidden_size]
-        # type_span_output.T: [hidden_size, num_types]
+        start_scores = self.start_logit_scale.exp() * (type_start_output.unsqueeze(0) @ token_start_output.transpose(1, 2))
+        end_scores = self.end_logit_scale.exp() * (type_end_output.unsqueeze(0) @ token_end_output.transpose(1, 2))
         span_scores = self.span_logit_scale.exp() * (token_span_output @ type_span_output.T)
-        # Permute to [batch_size, num_types, seq_length, seq_length]
         span_scores = span_scores.permute(0, 3, 1, 2)
 
         if labels is not None:
@@ -228,7 +224,7 @@ class CompressedSpanModel(PreTrainedModel):
         self.type_linear = mlp(type_config.hidden_size, config.linear_hidden_size, config.dropout)
         self.token_start_linear = mlp(token_config.hidden_size, config.linear_hidden_size, config.dropout)
         self.token_end_linear = mlp(token_config.hidden_size, config.linear_hidden_size, config.dropout)
-        self.token_span_linear = mlp(token_config.hidden_size * 2 + config.span_width_embedding_size, config.linear_hidden_size, config.dropout)
+        self.token_span_linear = mlp(config.linear_hidden_size * 2 + config.span_width_embedding_size, config.linear_hidden_size, config.dropout)
         self.fusion_linear = mlp(config.linear_hidden_size * 2, config.linear_hidden_size, config.dropout)
         self.width_embedding = nn.Embedding(config.max_span_length + 1, config.span_width_embedding_size, padding_idx=0)
         self.start_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))

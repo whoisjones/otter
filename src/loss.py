@@ -8,7 +8,6 @@ class BCELoss(nn.Module):
         loss = F.binary_cross_entropy_with_logits(
             logits, 
             labels,
-            pos_weight=torch.tensor(4.0, device=logits.device),
             reduction="none"
         )
         return loss
