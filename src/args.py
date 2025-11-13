@@ -19,6 +19,9 @@ class ModelArguments:
     linear_hidden_size: int = field(
         default=128, metadata={"help": "Size of the last linear layer."}
     )
+    span_width_embedding_size: int = field(
+        default=128, metadata={"help": "Size of the span width embedding."}
+    )
     init_temperature: float = field(
         default=0.03, metadata={"help": "Initial temperature for the logits."}
     )

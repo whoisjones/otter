@@ -71,6 +71,7 @@ def main():
         max_span_length=data_args.max_span_length,
         dropout=model_args.dropout,
         linear_hidden_size=model_args.linear_hidden_size,
+        span_width_embedding_size=model_args.span_width_embedding_size,
         init_temperature=model_args.init_temperature,
         start_loss_weight=model_args.start_loss_weight,
         end_loss_weight=model_args.end_loss_weight,
