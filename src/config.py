@@ -16,6 +16,7 @@ class SpanModelConfig(PretrainedConfig):
         focal_gamma: float = 2.0,
         max_span_length: int = 30,
         linear_hidden_size: int = 128,
+        span_width_embedding_size: int = 128,
         dropout: float = 0.1,
         init_temperature: float = 0.07,
         type_encoder_pooling: str = "cls",
@@ -31,6 +32,7 @@ class SpanModelConfig(PretrainedConfig):
         self.max_span_length = max_span_length
         self.dropout = dropout
         self.linear_hidden_size = linear_hidden_size
+        self.span_width_embedding_size = span_width_embedding_size
         self.init_temperature = init_temperature
         self.type_encoder_pooling = type_encoder_pooling
         self.prediction_threshold = prediction_threshold
