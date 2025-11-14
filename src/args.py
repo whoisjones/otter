@@ -129,11 +129,26 @@ class DataTrainingArguments:
             raise ValueError("Need either a dataset name or a training/validation file/test_file.")
         else:
             if self.train_file is not None:
-                extension = self.train_file.split(".")[-1]
-                assert extension == "jsonl", "`train_file` should be a jsonl file."
+                if isinstance(self.train_file, list):
+                    for file in self.train_file:
+                        extension = file.split(".")[-1]
+                        assert extension == "jsonl", "`train_file` should be a jsonl file."
+                elif isinstance(self.train_file, str):
+                    extension = self.train_file.split(".")[-1]
+                    assert extension == "jsonl", "`train_file` should be a jsonl file."
             if self.validation_file is not None:
-                extension = self.validation_file.split(".")[-1]
-                assert extension == "jsonl", "`validation_file` should be a jsonl file."
+                if isinstance(self.validation_file, list):
+                    for file in self.validation_file:
+                        extension = file.split(".")[-1]
+                        assert extension == "jsonl", "`validation_file` should be a jsonl file."
+                elif isinstance(self.validation_file, str):
+                    extension = self.validation_file.split(".")[-1]
+                    assert extension == "jsonl", "`validation_file` should be a jsonl file."
             if self.test_file is not None:
-                extension = self.test_file.split(".")[-1]
-                assert extension == "jsonl", "`test_file` should be a jsonl file."
+                if isinstance(self.test_file, list):
+                    for file in self.test_file:
+                        extension = file.split(".")[-1]
+                        assert extension == "jsonl", "`test_file` should be a jsonl file."
+                elif isinstance(self.test_file, str):
+                    extension = self.test_file.split(".")[-1]
+                    assert extension == "jsonl", "`test_file` should be a jsonl file."
