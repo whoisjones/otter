@@ -49,7 +49,7 @@ def evaluate(model, dataloader, accelerator):
                     span_mask=batch["labels"]["span_loss_mask"],
                     span_mapping=batch["labels"]["spans_idx"],
                     id2label=batch["id2label"],
-                    threshold=0.1
+                    threshold=model.config.prediction_threshold
                 )
             add_batch_metrics(golds, predictions, metrics_by_type)
     
@@ -96,7 +96,7 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
 
         # Backward pass with accelerator (handles mixed precision automatically)
         accelerator.backward(loss)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
         optimizer.step()
         scheduler.step()
 
