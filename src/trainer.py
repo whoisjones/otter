@@ -28,17 +28,18 @@ def evaluate(model, dataloader, accelerator):
                 type_token_type_ids=batch.get("type_token_type_ids"),
                 labels=batch["labels"]
             )
-            
-            loss = output.loss
-            total_loss += loss.item()
-            num_batches += 1
+
+            if output.loss is not None:
+                loss = output.loss
+                total_loss += loss.item()
+                num_batches += 1
 
             golds = batch['labels']['ner']
             if len(output.span_logits.shape) == 4:
                 predictions = compute_span_predictions(
                     span_logits=output.span_logits,
-                    start_mask=batch["labels"]["start_loss_mask"],
-                    end_mask=batch["labels"]["end_loss_mask"],
+                    start_mask=batch["labels"]["valid_start_mask"],
+                    end_mask=batch["labels"]["valid_end_mask"],
                     max_span_width=model.config.max_span_length,
                     id2label=batch["id2label"],
                     threshold=model.config.prediction_threshold
@@ -46,8 +47,8 @@ def evaluate(model, dataloader, accelerator):
             else:
                 predictions = compute_compressed_span_predictions(
                     span_logits=output.span_logits,
-                    span_mask=batch["labels"]["span_loss_mask"],
-                    span_mapping=batch["labels"]["spans_idx"],
+                    span_mask=batch["labels"]["valid_span_mask"],
+                    span_mapping=batch["labels"]["span_subword_indices"],
                     id2label=batch["id2label"],
                     threshold=model.config.prediction_threshold
                 )

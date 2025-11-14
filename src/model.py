@@ -57,10 +57,10 @@ class SpanModel(PreTrainedModel):
             self.loss_fn = FocalLoss(alpha=config.focal_alpha, gamma=config.focal_gamma)
         elif config.loss_fn == "jgmaker":
             self.loss_fn = JGMakerLoss(total_steps=3000)
-        elif config.loss_fn == "contrastive":
-            self.loss_fn = ContrastiveLoss()
-        else:
+        elif config.loss_fn == "bce":
             self.loss_fn = BCELoss()
+        else:
+            raise ValueError(f"Invalid loss function: {config.loss_fn}")
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -143,19 +143,19 @@ class SpanModel(PreTrainedModel):
                 start_scores, 
                 labels["start_labels"], 
             )
-            start_loss = (start_loss * labels["start_loss_mask"]).sum() / labels["start_loss_mask"].sum()
+            start_loss = (start_loss * labels["valid_start_mask"]).sum() / labels["valid_start_mask"].sum()
 
             end_loss = self.loss_fn(
                 end_scores,
                 labels["end_labels"], 
             )
-            end_loss = (end_loss * labels["end_loss_mask"]).sum() / labels["end_loss_mask"].sum()
+            end_loss = (end_loss * labels["valid_end_mask"]).sum() / labels["valid_end_mask"].sum()
 
             span_loss = self.loss_fn(
                 span_scores, 
                 labels["span_labels"], 
             )
-            span_loss = (span_loss * labels["span_loss_mask"]).sum() / labels["span_loss_mask"].sum()
+            span_loss = (span_loss * labels["valid_span_mask"]).sum() / labels["valid_span_mask"].sum()
             loss = self.config.start_loss_weight * start_loss + self.config.end_loss_weight * end_loss + self.config.span_loss_weight * span_loss
             return SpanModelOutput(loss=loss, start_logits=start_scores, end_logits=end_scores, span_logits=span_scores)
         else:
@@ -238,10 +238,10 @@ class CompressedSpanModel(PreTrainedModel):
             self.loss_fn = FocalLoss(alpha=config.focal_alpha, gamma=config.focal_gamma)
         elif config.loss_fn == "jgmaker":
             self.loss_fn = JGMakerLoss(total_steps=3000)
-        elif config.loss_fn == "contrastive":
-            self.loss_fn = ContrastiveLoss()
-        else:
+        elif config.loss_fn == "bce":
             self.loss_fn = BCELoss()
+        else:
+            raise ValueError(f"Invalid loss function: {config.loss_fn}")
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -299,8 +299,8 @@ class CompressedSpanModel(PreTrainedModel):
 
         span_hidden = torch.cat(
             [
-                self.gather_spans(token_start_output, labels["spans_idx"][:, :, 0]),
-                self.gather_spans(token_end_output, labels["spans_idx"][:, :, 1]),
+                self.gather_spans(token_start_output, labels["span_subword_indices"][:, :, 0]),
+                self.gather_spans(token_end_output, labels["span_subword_indices"][:, :, 1]),
                 span_width_embeddings,
             ],
             dim=2
@@ -317,21 +317,210 @@ class CompressedSpanModel(PreTrainedModel):
                 start_scores, 
                 labels["start_labels"], 
             )
-            start_loss = (start_loss * labels["start_loss_mask"]).sum() / labels["start_loss_mask"].sum()
+            start_loss = (start_loss * labels["valid_start_mask"]).sum() / labels["valid_start_mask"].sum()
 
             end_loss = self.loss_fn(
                 end_scores,
                 labels["end_labels"], 
             )
-            end_loss = (end_loss * labels["end_loss_mask"]).sum() / labels["end_loss_mask"].sum()
+            end_loss = (end_loss * labels["valid_end_mask"]).sum() / labels["valid_end_mask"].sum()
 
             span_loss = self.loss_fn(
                 span_scores, 
                 labels["span_labels"], 
             )
-            span_loss = (span_loss * labels["span_loss_mask"]).sum() / labels["span_loss_mask"].sum()
+            span_loss = (span_loss * labels["valid_span_mask"]).sum() / labels["valid_span_mask"].sum()
             loss = self.config.start_loss_weight * start_loss + self.config.end_loss_weight * end_loss + self.config.span_loss_weight * span_loss
             return SpanModelOutput(loss=loss, start_logits=start_scores, end_logits=end_scores, span_logits=span_scores)
+        else:
+            return SpanModelOutput(start_logits=start_scores, end_logits=end_scores, span_logits=span_scores)
+    
+    def save_pretrained(self, path: str):
+        """Save model, tokenizer configs, and model state."""
+        path = Path(path)
+        path.mkdir(parents=True, exist_ok=True)
+        
+        # Save config
+        self.config.save_pretrained(str(path))
+        
+        # Save token and type encoder models
+        self.token_encoder.save_pretrained(str(path / "token_encoder"))
+        self.type_encoder.save_pretrained(str(path / "type_encoder"))
+        
+        # Save model state dict (span model specific weights)
+        torch.save(self.state_dict(), path / "model.pt")
+    
+    @classmethod
+    def from_pretrained(cls, path: str) -> "SpanModel":
+        """Load model from saved checkpoint."""
+        path = Path(path)
+        
+        # Load config
+        config = SpanModelConfig.from_pretrained(str(path))
+        
+        # Initialize model with config
+        model = cls(config)
+        
+        # Load token and type encoder models (matching __init__ with add_pooling_layer=False)
+        token_config = AutoConfig.from_pretrained(model.config.token_encoder)
+        type_config = AutoConfig.from_pretrained(model.config.type_encoder)
+        model.token_encoder = AutoModel.from_pretrained(str(path / "token_encoder"), config=token_config, add_pooling_layer=False)
+        model.type_encoder = AutoModel.from_pretrained(str(path / "type_encoder"), config=type_config, add_pooling_layer=False)
+        
+        # Load model state dict, filtering out pooling layer keys since encoders are loaded without pooling
+        state_dict = torch.load(path / "model.pt", map_location="cpu")
+        # Filter out pooling layer keys that don't exist in the model structure
+        model_state_keys = set(model.state_dict().keys())
+        filtered_state_dict = {k: v for k, v in state_dict.items() 
+                              if k in model_state_keys}
+        model.load_state_dict(filtered_state_dict, strict=False)
+        
+        return model
+
+    def gradient_checkpointing_enable(self):
+        self.token_encoder.gradient_checkpointing_enable()
+        self.type_encoder.gradient_checkpointing_enable()
+
+class ContrastiveSpanModel(PreTrainedModel):
+    """Contrastive span model."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        token_config = AutoConfig.from_pretrained(config.token_encoder)
+        type_config = AutoConfig.from_pretrained(config.type_encoder)
+
+        self.max_span_length = config.max_span_length
+        self.dropout = nn.Dropout(config.dropout)
+        self.linear_hidden_size = config.linear_hidden_size
+        self.config.pruned_heads = token_config.pruned_heads
+
+        self.type_linear = mlp(type_config.hidden_size, config.linear_hidden_size, config.dropout)
+        self.token_start_linear = mlp(token_config.hidden_size, config.linear_hidden_size, config.dropout)
+        self.token_end_linear = mlp(token_config.hidden_size, config.linear_hidden_size, config.dropout)
+        self.token_span_linear = mlp(config.linear_hidden_size * 2 + config.span_width_embedding_size, config.linear_hidden_size, config.dropout)
+        self.fusion_linear = mlp(config.linear_hidden_size * 2, config.linear_hidden_size, config.dropout)
+        self.width_embedding = nn.Embedding(config.max_span_length + 1, config.span_width_embedding_size, padding_idx=0)
+        self.start_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
+        self.end_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
+        self.span_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
+        self.post_init()
+
+        self.token_encoder = AutoModel.from_pretrained(config.token_encoder, config=token_config)
+        self.type_encoder = AutoModel.from_pretrained(config.type_encoder, config=type_config)
+        if config.loss_fn != "contrastive":
+            raise ValueError(f"Invalid loss function: {config.loss_fn}")
+        self.loss_fn = ContrastiveLoss()
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=0.02)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=0.02)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+
+    def gather_spans(self, hidden_states, span_indices):
+        _, _, H = hidden_states.shape
+        expanded_indices = span_indices.unsqueeze(2).expand(-1, -1, H)
+        span_representations = torch.gather(hidden_states, 1, expanded_indices)
+        return span_representations
+    
+    def forward(
+        self, 
+        token_input_ids: torch.Tensor = None, 
+        token_attention_mask: torch.Tensor = None,
+        token_token_type_ids: torch.Tensor = None,
+        type_input_ids: torch.Tensor = None, 
+        type_attention_mask: torch.Tensor = None,
+        type_token_type_ids: torch.Tensor = None,
+        labels: dict = None
+    ):
+        token_embeds = self.token_encoder(input_ids=token_input_ids, attention_mask=token_attention_mask, token_type_ids=token_token_type_ids)
+        type_embeds = self.type_encoder(input_ids=type_input_ids, attention_mask=type_attention_mask, token_type_ids=type_token_type_ids)
+        token_output = token_embeds.last_hidden_state
+
+        if self.config.type_encoder_pooling == "mean":
+            if type_attention_mask is not None:
+                attention_mask_expanded = type_attention_mask.unsqueeze(-1).expand(type_embeds.last_hidden_state.size()).float()
+                sum_embeddings = torch.sum(type_embeds.last_hidden_state * attention_mask_expanded, dim=1)
+                sum_mask = torch.clamp(attention_mask_expanded.sum(dim=1), min=1e-9)
+                type_output = sum_embeddings / sum_mask
+            else:
+                type_output = type_embeds.last_hidden_state.mean(dim=1)
+        else:
+            type_output = type_embeds.last_hidden_state[:, 0, :]
+
+        B, S, H = token_output.size()
+        C, _ = type_output.size()
+
+        token_start_output = F.normalize(self.dropout(self.token_start_linear(token_output)), dim=-1)
+        token_end_output = F.normalize(self.dropout(self.token_end_linear(token_output)), dim=-1)
+
+        type_output = F.normalize(self.dropout(self.type_linear(type_output)), dim=-1)
+
+        start_scores = self.start_logit_scale.exp() * torch.einsum("BSH,CH->BCS", token_start_output, type_output)
+        end_scores = self.end_logit_scale.exp() * torch.einsum("BSH,CH->BCS", token_end_output, type_output)
+        
+        span_width_embeddings = self.width_embedding(labels["span_lengths"])
+
+        span_hidden = torch.cat(
+            [
+                self.gather_spans(token_start_output, labels["span_subword_indices"][:, :, 0]),
+                self.gather_spans(token_end_output, labels["span_subword_indices"][:, :, 1]),
+                span_width_embeddings,
+            ],
+            dim=2
+        )
+
+        token_span_output = F.normalize(
+            self.dropout(self.token_span_linear(span_hidden)), dim=-1
+        )
+
+        span_scores = self.span_logit_scale.exp() * torch.einsum("BSH,CH->BCS", token_span_output, type_output)
+
+        if "ner" not in labels:
+            flat_start_scores = start_scores.reshape(B * C, S)
+            flat_end_scores = end_scores.reshape(B * C, S)
+            flat_span_scores = span_scores.reshape(B * C, span_scores.size(-1))
+            start_negative_mask = labels["start_negative_mask"].reshape(B * C, S)
+            end_negative_mask = labels["end_negative_mask"].reshape(B * C, S)
+            span_negative_mask = labels["span_negative_mask"].reshape(B * C, span_scores.size(-1))
+
+            start_threshold_loss = self.loss_fn(flat_start_scores, 0, start_negative_mask)
+            end_threshold_loss = self.loss_fn(flat_end_scores, 0, end_negative_mask)
+            span_threshold_loss = self.loss_fn(flat_span_scores, 0, span_negative_mask)
+            
+            threshold_loss = (
+                self.config.start_loss_weight * start_threshold_loss +
+                self.config.end_loss_weight * end_threshold_loss +
+                self.config.span_loss_weight * span_threshold_loss
+            )
+
+            label_batch_indices = labels["label_batch_indices"]
+            label_subword_indices = labels["label_subword_indices"]
+            label_span_idx = labels["label_span_idx"]
+            label_start_mask = labels["label_start_mask"]
+            label_end_mask = labels["label_end_mask"]
+            label_span_mask = labels["label_span_mask"]
+
+            start_loss = self.loss_fn(start_scores[tuple(label_batch_indices)], label_subword_indices[0], label_start_mask)
+            end_loss = self.loss_fn(end_scores[tuple(label_batch_indices)], label_subword_indices[1], label_end_mask)
+            span_loss = self.loss_fn(span_scores[tuple(label_batch_indices)], label_span_idx, label_span_mask)
+            
+            loss = (
+                self.config.start_loss_weight * start_loss +
+                self.config.end_loss_weight * end_loss +
+                self.config.span_loss_weight * span_loss
+            )
+
+            total_loss = threshold_loss * 0.5 + loss * 0.5
+
+            return SpanModelOutput(loss=total_loss, start_logits=start_scores, end_logits=end_scores, span_logits=span_scores)
         else:
             return SpanModelOutput(start_logits=start_scores, end_logits=end_scores, span_logits=span_scores)
     
