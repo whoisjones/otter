@@ -12,6 +12,8 @@ from .logger import setup_logger
 def evaluate(model, dataloader, accelerator):
     """Evaluate the model on a dataset."""
     model.eval()
+    unwrapped_model = accelerator.unwrap_model(model)
+
     total_loss = 0.0
     num_batches = 0
     
@@ -40,9 +42,9 @@ def evaluate(model, dataloader, accelerator):
                     span_logits=output.span_logits,
                     start_mask=batch["labels"]["valid_start_mask"],
                     end_mask=batch["labels"]["valid_end_mask"],
-                    max_span_width=model.config.max_span_length,
+                    max_span_width=unwrapped_model.config.max_span_length,
                     id2label=batch["id2label"],
-                    threshold=model.config.prediction_threshold
+                    threshold=unwrapped_model.config.prediction_threshold
                 )
             else:
                 predictions = compute_compressed_span_predictions(
@@ -50,7 +52,7 @@ def evaluate(model, dataloader, accelerator):
                     span_mask=batch["labels"]["valid_span_mask"],
                     span_mapping=batch["labels"]["span_subword_indices"],
                     id2label=batch["id2label"],
-                    threshold=model.config.prediction_threshold
+                    threshold=unwrapped_model.config.prediction_threshold
                 )
             add_batch_metrics(golds, predictions, metrics_by_type)
     
@@ -72,6 +74,11 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
     
     save_total_limit = getattr(args, 'save_total_limit', 2)
     best_models = []
+    best_checkpoint_path = None
+    
+    # Early stopping parameters
+    patience = args.early_stopping_patience
+    patience_counter = 0
     
     train_iterator = cycle(train_dataloader)
     
@@ -128,9 +135,9 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
             logger.info(f"F1 Score: {eval_metrics['micro']['f1']:.4f}")
             
             # Save checkpoint (unwrap model if needed)
+            checkpoint_dir = Path(args.output_dir) / f"checkpoint-{global_step}"
             if accelerator.is_main_process:
                 unwrapped_model = accelerator.unwrap_model(model)
-                checkpoint_dir = Path(args.output_dir) / f"checkpoint-{global_step}"
                 unwrapped_model.save_pretrained(str(checkpoint_dir))
                 logger.info(f"Saved checkpoint to {checkpoint_dir}")
             
@@ -138,6 +145,12 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
             current_f1 = eval_metrics['micro']['f1']
             if current_f1 > best_f1:
                 best_f1 = current_f1
+                best_checkpoint_path = checkpoint_dir
+                patience_counter = 0
+                logger.info(f"New best F1: {best_f1:.4f} at checkpoint {checkpoint_dir}")
+            else:
+                patience_counter += 1
+                logger.info(f"No improvement. Patience: {patience_counter}/{patience}")
             
             best_models.append((current_f1, checkpoint_dir, global_step))
             best_models.sort(key=lambda x: x[0], reverse=True)
@@ -150,11 +163,33 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
             
             logger.info(f"{'='*50}\n")
             
+            # Early stopping check
+            if patience_counter >= patience:
+                logger.info(f"Early stopping triggered after {patience} evaluations without improvement.")
+                logger.info(f"Best F1 score: {best_f1:.4f}")
+                break
+            
             # Reset training metrics
             total_loss = 0.0
             num_batches = 0
             model.train()
     
     progress_bar.close()
-    return global_step
+    
+    # Save best checkpoint info and create a "best" checkpoint link
+    if best_checkpoint_path is not None and accelerator.is_main_process:
+        best_checkpoint_link = Path(args.output_dir) / "best_checkpoint"
+        if best_checkpoint_link.exists():
+            if best_checkpoint_link.is_symlink():
+                best_checkpoint_link.unlink()
+            elif best_checkpoint_link.is_dir():
+                shutil.rmtree(best_checkpoint_link)
+            else:
+                best_checkpoint_link.unlink()
+        # Create symlink using relative path
+        best_checkpoint_link.symlink_to(best_checkpoint_path.relative_to(Path(args.output_dir)))
+        logger.info(f"Best checkpoint (F1={best_f1:.4f}) saved at: {best_checkpoint_path}")
+        logger.info(f"Symlink created: {best_checkpoint_link} -> {best_checkpoint_path.relative_to(Path(args.output_dir))}")
+    
+    return global_step, best_checkpoint_path, best_f1
 
