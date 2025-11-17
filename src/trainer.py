@@ -65,7 +65,7 @@ def evaluate(model, dataloader, accelerator):
 
 
 def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accelerator, args):
-    logger = setup_logger(args.output_dir)
+    logger = setup_logger(args.output_dir, is_main_process=accelerator.is_main_process)
     model.train()
     total_loss = 0.0
     num_batches = 0
@@ -120,19 +120,22 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
         
         # Evaluate and save checkpoint every eval_steps
         if global_step % args.eval_steps == 0:
-            logger.info(f"\n{'='*50}")
-            logger.info(f"Step {global_step}/{args.max_steps}")
-            logger.info(f"Training Loss: {total_loss/num_batches:.4f}")
+            if accelerator.is_main_process:
+                logger.info(f"\n{'='*50}")
+                logger.info(f"Step {global_step}/{args.max_steps}")
+                logger.info(f"Training Loss: {total_loss/num_batches:.4f}")
             
             # Evaluate
             if eval_dataloader is not None:
                 eval_metrics = evaluate(model, eval_dataloader, accelerator)
             else:
                 eval_metrics = {"loss": 0.0, "micro": {"precision": 0.0, "recall": 0.0, "f1": 0.0}}
-            logger.info(f"Evaluation Loss: {eval_metrics['loss']:.4f}")
-            logger.info(f"Precision: {eval_metrics['micro']['precision']:.4f}")
-            logger.info(f"Recall: {eval_metrics['micro']['recall']:.4f}")
-            logger.info(f"F1 Score: {eval_metrics['micro']['f1']:.4f}")
+            
+            if accelerator.is_main_process:
+                logger.info(f"Evaluation Loss: {eval_metrics['loss']:.4f}")
+                logger.info(f"Precision: {eval_metrics['micro']['precision']:.4f}")
+                logger.info(f"Recall: {eval_metrics['micro']['recall']:.4f}")
+                logger.info(f"F1 Score: {eval_metrics['micro']['f1']:.4f}")
             
             # Save checkpoint (unwrap model if needed)
             checkpoint_dir = Path(args.output_dir) / f"checkpoint-{global_step}"
@@ -147,26 +150,31 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
                 best_f1 = current_f1
                 best_checkpoint_path = checkpoint_dir
                 patience_counter = 0
-                logger.info(f"New best F1: {best_f1:.4f} at checkpoint {checkpoint_dir}")
+                if accelerator.is_main_process:
+                    logger.info(f"New best F1: {best_f1:.4f} at checkpoint {checkpoint_dir}")
             else:
                 patience_counter += 1
-                logger.info(f"No improvement. Patience: {patience_counter}/{patience}")
+                if accelerator.is_main_process:
+                    logger.info(f"No improvement. Patience: {patience_counter}/{patience}")
             
             best_models.append((current_f1, checkpoint_dir, global_step))
             best_models.sort(key=lambda x: x[0], reverse=True)
             
             if len(best_models) > save_total_limit:
                 _, worst_checkpoint_path, _ = best_models[save_total_limit]
-                shutil.rmtree(worst_checkpoint_path)
+                if accelerator.is_main_process:
+                    shutil.rmtree(worst_checkpoint_path)
             
             best_models = best_models[:save_total_limit]
             
-            logger.info(f"{'='*50}\n")
+            if accelerator.is_main_process:
+                logger.info(f"{'='*50}\n")
             
             # Early stopping check
             if patience_counter >= patience:
-                logger.info(f"Early stopping triggered after {patience} evaluations without improvement.")
-                logger.info(f"Best F1 score: {best_f1:.4f}")
+                if accelerator.is_main_process:
+                    logger.info(f"Early stopping triggered after {patience} evaluations without improvement.")
+                    logger.info(f"Best F1 score: {best_f1:.4f}")
                 break
             
             # Reset training metrics
