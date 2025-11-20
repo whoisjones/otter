@@ -21,6 +21,9 @@ class SpanModelConfig(PretrainedConfig):
         init_temperature: float = 0.07,
         type_encoder_pooling: str = "cls",
         prediction_threshold: float = 0.5,
+        start_pos_weight: float = None,
+        end_pos_weight: float = None,
+        span_pos_weight: float = None,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -36,3 +39,6 @@ class SpanModelConfig(PretrainedConfig):
         self.init_temperature = init_temperature
         self.type_encoder_pooling = type_encoder_pooling
         self.prediction_threshold = prediction_threshold
+        self.start_pos_weight = start_pos_weight
+        self.end_pos_weight = end_pos_weight
+        self.span_pos_weight = span_pos_weight
