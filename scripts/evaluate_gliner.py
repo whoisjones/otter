@@ -50,10 +50,10 @@ def transform_jsonl_to_gliner_dataset(dataset: Dataset) -> list[dict]:
     return gliner_format
 
 def classic_evaluation():
-    dataset = load_dataset("json", data_files="/vol/tmp/goldejon/ner/data/masakhaner/swa/test.jsonl")
+    dataset = load_dataset("json", data_files="/vol/tmp/goldejon/ner/data/thainer/test.jsonl")
     test_dataset_with_span_labels = transform_jsonl_to_gliner_dataset(dataset['train'])
     labels = list(set([label for sample in test_dataset_with_span_labels for _, _, label in sample["ner"]]))
-    model = GLiNER.from_pretrained("urchade/gliner_multi-v2.1")
+    model = GLiNER.from_pretrained("knowledgator/gliner-x-base")
     model.to("cuda")
 
     results, f1 = model.evaluate(test_dataset_with_span_labels, flat_ner=True, batch_size=12, entity_types=list(labels))
@@ -62,7 +62,7 @@ def classic_evaluation():
 def string_evaluation():
     dataset = load_dataset("json", data_files="/vol/tmp/goldejon/ner/data/thainer_no_tokens/test.jsonl")
     labels = list(set([span["label"] for sample in dataset['train'] for span in sample['char_spans']]))
-    model = GLiNER.from_pretrained("urchade/gliner_multi-v2.1")
+    model = GLiNER.from_pretrained("knowledgator/gliner-x-base")
     model.to("cuda")
 
     tp, fp, fn = 0, 0, 0
@@ -75,8 +75,10 @@ def string_evaluation():
         fp += len(set(preds) - set(golds))
         fn += len(set(golds) - set(preds))
     
-    f1 = 2 * tp / (2 * tp + fp + fn)
-    print(f1)
+    p = tp / (tp + fp)
+    r = tp / (tp + fn)
+    f1 = 2 * p * r / (p + r)
+    print(f"p: {p:.4f}, r: {r:.4f}, f1: {f1:.4f}")
 
 if __name__ == "__main__":
-    string_evaluation()
+    classic_evaluation()
