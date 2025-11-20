@@ -3,7 +3,6 @@ import torch.nn.functional as F
 
 def compute_span_predictions(span_logits, start_mask, end_mask, max_span_width, id2label, threshold=0.5):
     B, T, S, _ = span_logits.shape
-    device = span_logits.device
 
     span_probs = torch.sigmoid(span_logits)
     span_preds = torch.triu(span_probs > threshold)
@@ -25,21 +24,29 @@ def compute_span_predictions(span_logits, start_mask, end_mask, max_span_width, 
     end_indexes = end_indexes[order]
     confidences = confidences[order]
 
-    predictions = [[] for _ in range(B)]
-    used_by_batch = [torch.zeros(S, dtype=torch.bool, device=device) for _ in range(B)]
+    # Convert to CPU and lists early to avoid GPU memory accumulation
+    batch_ids_list = batch_ids.cpu().tolist()
+    type_ids_list = type_ids.cpu().tolist()
+    start_indexes_list = start_indexes.cpu().tolist()
+    end_indexes_list = end_indexes.cpu().tolist()
+    confidences_list = confidences.cpu().tolist()
+    
+    del batch_ids, type_ids, start_indexes, end_indexes, confidences, span_probs, span_preds
 
-    for b, t, s, e, c in zip(batch_ids.tolist(), type_ids.tolist(), 
-                             start_indexes.tolist(), end_indexes.tolist(), confidences.tolist()):
-        if used_by_batch[b][s:e + 1].any():
+    predictions = [[] for _ in range(B)]
+    used_by_batch = [set() for _ in range(B)]  # Use sets instead of tensors
+
+    for b, t, s, e, c in zip(batch_ids_list, type_ids_list, 
+                             start_indexes_list, end_indexes_list, confidences_list):
+        if any(pos in used_by_batch[b] for pos in range(s, e + 1)):
             continue
         predictions[b].append({"start": s, "end": e, "label": id2label[t], "confidence": c})
-        used_by_batch[b][s:e + 1] = True
+        used_by_batch[b].update(range(s, e + 1))
     
     return predictions
 
 def compute_compressed_span_predictions(span_logits, span_mask, span_mapping, id2label, threshold=0.5):
     B, C, S = span_logits.shape
-    device = span_logits.device
 
     span_probs = torch.sigmoid(span_logits)
     if threshold == "cls":
@@ -55,16 +62,25 @@ def compute_compressed_span_predictions(span_logits, span_mask, span_mapping, id
     span_ids = span_ids[order]
     confidences = confidences[order]
 
-    predictions = [[] for _ in range(B)]
-    used_by_batch = [torch.zeros(S, dtype=torch.bool, device=device) for _ in range(B)]
+    # Convert to CPU and lists early to avoid GPU memory accumulation
+    batch_ids_list = batch_ids.cpu().tolist()
+    type_ids_list = type_ids.cpu().tolist()
+    span_ids_list = span_ids.cpu().tolist()
+    confidences_list = confidences.cpu().tolist()
+    span_mapping_cpu = span_mapping.cpu()
+    
+    del batch_ids, type_ids, span_ids, confidences, span_probs, span_preds
 
-    for b, t, s, c in zip(batch_ids.tolist(), type_ids.tolist(), 
-                             span_ids.tolist(), confidences.tolist()):
-        start, end = span_mapping[b, s].cpu().numpy().tolist()
-        if used_by_batch[b][start:end + 1].any():
+    predictions = [[] for _ in range(B)]
+    used_by_batch = [set() for _ in range(B)]
+
+    for b, t, s, c in zip(batch_ids_list, type_ids_list, 
+                             span_ids_list, confidences_list):
+        start, end = span_mapping_cpu[b, s].tolist()
+        if any(pos in used_by_batch[b] for pos in range(start, end + 1)):
             continue
         predictions[b].append({"start": start, "end": end, "label": id2label[t], "confidence": c})
-        used_by_batch[b][start:end + 1] = True
+        used_by_batch[b].update(range(start, end + 1))
 
     return predictions
 

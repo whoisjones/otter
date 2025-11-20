@@ -1,4 +1,5 @@
 import torch
+import gc
 from tqdm import tqdm
 from pathlib import Path
 from itertools import cycle
@@ -33,13 +34,13 @@ def evaluate(model, dataloader, accelerator):
 
             if output.loss is not None:
                 loss = output.loss
-                total_loss += loss.item()
+                total_loss += loss.detach().item()
                 num_batches += 1
 
             golds = batch['labels']['ner']
             if len(output.span_logits.shape) == 4:
                 predictions = compute_span_predictions(
-                    span_logits=output.span_logits,
+                    span_logits=output.span_logits.detach(),
                     start_mask=batch["labels"]["valid_start_mask"],
                     end_mask=batch["labels"]["valid_end_mask"],
                     max_span_width=unwrapped_model.config.max_span_length,
@@ -48,13 +49,27 @@ def evaluate(model, dataloader, accelerator):
                 )
             else:
                 predictions = compute_compressed_span_predictions(
-                    span_logits=output.span_logits,
+                    span_logits=output.span_logits.detach(),
                     span_mask=batch["labels"]["valid_span_mask"],
                     span_mapping=batch["labels"]["span_subword_indices"],
                     id2label=batch["id2label"],
                     threshold=unwrapped_model.config.prediction_threshold
                 )
             add_batch_metrics(golds, predictions, metrics_by_type)
+            
+            # Explicitly clear all batch tensors including nested ones
+            if "labels" in batch:
+                for key in list(batch["labels"].keys()):
+                    if isinstance(batch["labels"][key], torch.Tensor):
+                        del batch["labels"][key]
+                    elif isinstance(batch["labels"][key], list):
+                        batch["labels"][key].clear()
+                batch["labels"].clear()
+            del output, batch, predictions, golds
+            
+            if num_batches % 50 == 0:
+                torch.cuda.empty_cache()
+                gc.collect()
     
     avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
     
@@ -76,7 +91,6 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
     best_models = []
     best_checkpoint_path = None
     
-    # Early stopping parameters
     patience = args.early_stopping_patience
     patience_counter = 0
     
@@ -89,7 +103,7 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
         if not batch:
             continue
         
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         
         output = model(
             token_input_ids=batch["token_input_ids"],
@@ -102,30 +116,41 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
         )
         loss = output.loss
 
-        # Backward pass with accelerator (handles mixed precision automatically)
         accelerator.backward(loss)
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
         optimizer.step()
         scheduler.step()
 
-        total_loss += loss.item()
+        loss_value = loss.detach().item()
+        total_loss += loss_value
         num_batches += 1
         global_step += 1
         
+        del loss, output
+        # Clear batch data including nested tensors in labels
+        if "labels" in batch:
+            for key in list(batch["labels"].keys()):
+                if isinstance(batch["labels"][key], torch.Tensor):
+                    del batch["labels"][key]
+            batch["labels"].clear()
+        del batch
+        
         progress_bar.update(1)
         progress_bar.set_postfix({
-            "loss": f"{loss.item():.4f}",
+            "loss": f"{loss_value:.4f}",
             "avg_loss": f"{total_loss/num_batches:.4f}"
         })
         
-        # Evaluate and save checkpoint every eval_steps
+        if global_step % 50 == 0:
+            torch.cuda.empty_cache()
+            gc.collect()
+        
         if global_step % args.eval_steps == 0:
             if accelerator.is_main_process:
                 logger.info(f"\n{'='*50}")
                 logger.info(f"Step {global_step}/{args.max_steps}")
                 logger.info(f"Training Loss: {total_loss/num_batches:.4f}")
             
-            # Evaluate
             if eval_dataloader is not None:
                 eval_metrics = evaluate(model, eval_dataloader, accelerator)
             else:
@@ -137,14 +162,12 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
                 logger.info(f"Recall: {eval_metrics['micro']['recall']:.4f}")
                 logger.info(f"F1 Score: {eval_metrics['micro']['f1']:.4f}")
             
-            # Save checkpoint (unwrap model if needed)
             checkpoint_dir = Path(args.output_dir) / f"checkpoint-{global_step}"
             if accelerator.is_main_process:
                 unwrapped_model = accelerator.unwrap_model(model)
                 unwrapped_model.save_pretrained(str(checkpoint_dir))
                 logger.info(f"Saved checkpoint to {checkpoint_dir}")
             
-            # Track checkpoints with their F1 scores
             current_f1 = eval_metrics['micro']['f1']
             if current_f1 > best_f1:
                 best_f1 = current_f1
@@ -170,21 +193,18 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
             if accelerator.is_main_process:
                 logger.info(f"{'='*50}\n")
             
-            # Early stopping check
             if patience_counter >= patience:
                 if accelerator.is_main_process:
                     logger.info(f"Early stopping triggered after {patience} evaluations without improvement.")
                     logger.info(f"Best F1 score: {best_f1:.4f}")
                 break
             
-            # Reset training metrics
             total_loss = 0.0
             num_batches = 0
             model.train()
     
     progress_bar.close()
     
-    # Save best checkpoint info and create a "best" checkpoint link
     if best_checkpoint_path is not None and accelerator.is_main_process:
         best_checkpoint_link = Path(args.output_dir) / "best_checkpoint"
         if best_checkpoint_link.exists():
@@ -194,7 +214,6 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
                 shutil.rmtree(best_checkpoint_link)
             else:
                 best_checkpoint_link.unlink()
-        # Create symlink using relative path
         best_checkpoint_link.symlink_to(best_checkpoint_path.relative_to(Path(args.output_dir)))
         logger.info(f"Best checkpoint (F1={best_f1:.4f}) saved at: {best_checkpoint_path}")
         logger.info(f"Symlink created: {best_checkpoint_link} -> {best_checkpoint_path.relative_to(Path(args.output_dir))}")
