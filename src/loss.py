@@ -4,11 +4,12 @@ import torch.nn.functional as F
 
 
 class BCELoss(nn.Module):
-    def forward(self, logits, labels):
+    def forward(self, logits, labels, pos_weight=None, **kwargs):
         loss = F.binary_cross_entropy_with_logits(
             logits, 
             labels,
-            reduction="none"
+            reduction="none",
+            pos_weight=pos_weight
         )
         return loss
 
@@ -19,12 +20,12 @@ class FocalLoss(nn.Module):
         self.alpha = alpha
         self.gamma = gamma
     
-    def forward(self, logits, labels):
+    def forward(self, logits, labels, pos_weight=None, **kwargs):
         if not (0 <= self.alpha <= 1) and self.alpha != -1:
             raise ValueError(f"Invalid alpha value: {self.alpha}. alpha must be in the range [0,1] or -1 for ignore.")
 
         p = torch.sigmoid(logits)
-        ce_loss = F.binary_cross_entropy_with_logits(logits, labels, reduction="none")
+        ce_loss = F.binary_cross_entropy_with_logits(logits, labels, reduction="none", pos_weight=pos_weight)
         p_t = p * labels + (1 - p) * (1 - labels)
         loss = ce_loss * ((1 - p_t) ** self.gamma)
 
@@ -86,10 +87,10 @@ class JGMakerLoss(nn.Module):
         self.threshold = threshold
         self.step = 0
 
-    def forward(self, logits: torch.Tensor, labels: torch.Tensor):
+    def forward(self, logits: torch.Tensor, labels: torch.Tensor, pos_weight=None, **kwargs):
         if self.training:
             self.step += 1/3
-        ce = F.binary_cross_entropy_with_logits(logits, labels, reduction="none")
+        ce = F.binary_cross_entropy_with_logits(logits, labels, reduction="none", pos_weight=pos_weight)
 
         with torch.no_grad():
             probs = torch.sigmoid(logits)
@@ -101,8 +102,9 @@ class JGMakerLoss(nn.Module):
             fp = neg & preds
             tn = neg & (~preds)
 
-        denom = torch.log1p(torch.tensor(self.total_steps / self.k, device=logits.device))
-        alpha = torch.log1p(torch.tensor(self.step, device=logits.device) / self.k) / denom
+        # Create scalars directly instead of tensors to avoid accumulation
+        denom = torch.log1p(torch.tensor(self.total_steps / self.k, device=logits.device, dtype=logits.dtype))
+        alpha = torch.log1p(torch.tensor(self.step, device=logits.device, dtype=logits.dtype) / self.k) / denom
         beta = 1.0 - alpha
 
         types_mask = tp | fp | fn
