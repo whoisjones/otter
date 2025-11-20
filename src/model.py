@@ -139,21 +139,36 @@ class SpanModel(PreTrainedModel):
         span_scores = span_scores.permute(0, 3, 1, 2)
 
         if labels is not None:
+            start_pos_weight = None
+            if self.config.start_pos_weight is not None:
+                start_pos_weight = torch.tensor(self.config.start_pos_weight, device=start_scores.device, dtype=start_scores.dtype)
+            
+            end_pos_weight = None
+            if self.config.end_pos_weight is not None:
+                end_pos_weight = torch.tensor(self.config.end_pos_weight, device=end_scores.device, dtype=end_scores.dtype)
+            
+            span_pos_weight = None
+            if self.config.span_pos_weight is not None:
+                span_pos_weight = torch.tensor(self.config.span_pos_weight, device=span_scores.device, dtype=span_scores.dtype)
+            
             start_loss = self.loss_fn(
                 start_scores, 
-                labels["start_labels"], 
+                labels["start_labels"],
+                pos_weight=start_pos_weight
             )
             start_loss = (start_loss * labels["valid_start_mask"]).sum() / labels["valid_start_mask"].sum()
 
             end_loss = self.loss_fn(
                 end_scores,
-                labels["end_labels"], 
+                labels["end_labels"],
+                pos_weight=end_pos_weight
             )
             end_loss = (end_loss * labels["valid_end_mask"]).sum() / labels["valid_end_mask"].sum()
 
             span_loss = self.loss_fn(
                 span_scores, 
-                labels["span_labels"], 
+                labels["span_labels"],
+                pos_weight=span_pos_weight
             )
             span_loss = (span_loss * labels["valid_span_mask"]).sum() / labels["valid_span_mask"].sum()
             loss = self.config.start_loss_weight * start_loss + self.config.end_loss_weight * end_loss + self.config.span_loss_weight * span_loss
@@ -313,21 +328,36 @@ class CompressedSpanModel(PreTrainedModel):
         span_scores = self.span_logit_scale.exp() * torch.einsum("BSH,CH->BCS", token_span_output, type_output)
 
         if labels is not None:
+            start_pos_weight = None
+            if self.config.start_pos_weight is not None:
+                start_pos_weight = torch.tensor(self.config.start_pos_weight, device=start_scores.device, dtype=start_scores.dtype)
+            
+            end_pos_weight = None
+            if self.config.end_pos_weight is not None:
+                end_pos_weight = torch.tensor(self.config.end_pos_weight, device=end_scores.device, dtype=end_scores.dtype)
+            
+            span_pos_weight = None
+            if self.config.span_pos_weight is not None:
+                span_pos_weight = torch.tensor(self.config.span_pos_weight, device=span_scores.device, dtype=span_scores.dtype)
+            
             start_loss = self.loss_fn(
                 start_scores, 
-                labels["start_labels"], 
+                labels["start_labels"],
+                pos_weight=start_pos_weight
             )
             start_loss = (start_loss * labels["valid_start_mask"]).sum() / labels["valid_start_mask"].sum()
 
             end_loss = self.loss_fn(
                 end_scores,
-                labels["end_labels"], 
+                labels["end_labels"],
+                pos_weight=end_pos_weight
             )
             end_loss = (end_loss * labels["valid_end_mask"]).sum() / labels["valid_end_mask"].sum()
 
             span_loss = self.loss_fn(
                 span_scores, 
-                labels["span_labels"], 
+                labels["span_labels"],
+                pos_weight=span_pos_weight
             )
             span_loss = (span_loss * labels["valid_span_mask"]).sum() / labels["valid_span_mask"].sum()
             loss = self.config.start_loss_weight * start_loss + self.config.end_loss_weight * end_loss + self.config.span_loss_weight * span_loss
