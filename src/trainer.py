@@ -1,14 +1,20 @@
 import torch
-import gc
 from tqdm import tqdm
 from pathlib import Path
-from itertools import cycle
 from collections import defaultdict
-import shutil
 
+import shutil
 from .metrics import compute_span_predictions, compute_compressed_span_predictions, add_batch_metrics, finalize_metrics
 from .logger import setup_logger
 
+
+def cycle(iterable):
+    iterator = iter(iterable)
+    while True:
+        try:
+            yield next(iterator)
+        except StopIteration:
+            iterator = iter(iterable)
 
 def evaluate(model, dataloader, accelerator):
     """Evaluate the model on a dataset."""
@@ -21,14 +27,11 @@ def evaluate(model, dataloader, accelerator):
     metrics_by_type = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
     
     with torch.no_grad():
-        for batch in tqdm(dataloader, desc="Evaluating", disable=not accelerator.is_local_main_process):
+        pbar = tqdm(total=len(dataloader), desc="Evaluating", disable=not accelerator.is_local_main_process)
+        for batch in dataloader:
             output = model(
-                token_input_ids=batch["token_input_ids"],
-                token_attention_mask=batch["token_attention_mask"],
-                token_token_type_ids=batch.get("token_token_type_ids"),
-                type_input_ids=batch["type_input_ids"],
-                type_attention_mask=batch["type_attention_mask"],
-                type_token_type_ids=batch.get("type_token_type_ids"),
+                token_encoder_inputs=batch["token_encoder_inputs"],
+                type_encoder_inputs=batch["type_encoder_inputs"],
                 labels=batch["labels"]
             )
 
@@ -57,24 +60,15 @@ def evaluate(model, dataloader, accelerator):
                 )
             add_batch_metrics(golds, predictions, metrics_by_type)
             
-            # Explicitly clear all batch tensors including nested ones
-            if "labels" in batch:
-                for key in list(batch["labels"].keys()):
-                    if isinstance(batch["labels"][key], torch.Tensor):
-                        del batch["labels"][key]
-                    elif isinstance(batch["labels"][key], list):
-                        batch["labels"][key].clear()
-                batch["labels"].clear()
-            del output, batch, predictions, golds
-            
-            if num_batches % 50 == 0:
-                torch.cuda.empty_cache()
-                gc.collect()
-    
+            pbar.update(1)
+        pbar.close()
+
     avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
     
     metrics = finalize_metrics(metrics_by_type)
     metrics["loss"] = avg_loss
+
+    torch.cuda.empty_cache()
     
     return metrics
 
@@ -96,6 +90,9 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
     
     train_iterator = cycle(train_dataloader)
     
+    steps_per_epoch = len(train_dataloader)
+    logging_steps = getattr(args, 'logging_steps', 10)
+    
     progress_bar = tqdm(total=args.max_steps, desc="Training", disable=not accelerator.is_local_main_process)
     
     while global_step < args.max_steps:
@@ -103,21 +100,18 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
         if not batch:
             continue
         
-        optimizer.zero_grad(set_to_none=True)
+        optimizer.zero_grad()
         
         output = model(
-            token_input_ids=batch["token_input_ids"],
-            token_attention_mask=batch["token_attention_mask"],
-            token_token_type_ids=batch.get("token_token_type_ids"),
-            type_input_ids=batch["type_input_ids"],
-            type_attention_mask=batch["type_attention_mask"],
-            type_token_type_ids=batch.get("type_token_type_ids"),
+            token_encoder_inputs=batch["token_encoder_inputs"],
+            type_encoder_inputs=batch["type_encoder_inputs"],
             labels=batch["labels"]
         )
         loss = output.loss
 
         accelerator.backward(loss)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+        
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
         optimizer.step()
         scheduler.step()
 
@@ -125,25 +119,25 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
         total_loss += loss_value
         num_batches += 1
         global_step += 1
+
+        if hasattr(scheduler, 'get_last_lr'):
+            lr = scheduler.get_last_lr()[0] if isinstance(scheduler.get_last_lr(), list) else scheduler.get_last_lr()
+        else:
+            lr = optimizer.param_groups[0]['lr']
         
-        del loss, output
-        # Clear batch data including nested tensors in labels
-        if "labels" in batch:
-            for key in list(batch["labels"].keys()):
-                if isinstance(batch["labels"][key], torch.Tensor):
-                    del batch["labels"][key]
-            batch["labels"].clear()
-        del batch
+        epoch = global_step / steps_per_epoch if steps_per_epoch > 0 else 0.0
+        
+        if global_step % logging_steps == 0 and accelerator.is_main_process:
+            avg_loss = total_loss / num_batches
+            metrics = {
+                'loss': round(avg_loss, 4),
+                'grad_norm': round(grad_norm.item(), 4) if isinstance(grad_norm, torch.Tensor) else round(grad_norm, 4),
+                'learning_rate': '{:.2e}'.format(lr),
+                'epoch': round(epoch, 2)
+            }
+            progress_bar.write(str(metrics))
         
         progress_bar.update(1)
-        progress_bar.set_postfix({
-            "loss": f"{loss_value:.4f}",
-            "avg_loss": f"{total_loss/num_batches:.4f}"
-        })
-        
-        if global_step % 50 == 0:
-            torch.cuda.empty_cache()
-            gc.collect()
         
         if global_step % args.eval_steps == 0:
             if accelerator.is_main_process:

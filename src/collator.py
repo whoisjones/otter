@@ -282,18 +282,25 @@ class InBatchDataCollator:
         annotations["valid_end_mask"] = torch.stack(annotations["valid_end_mask"], dim=0)
         annotations["valid_span_mask"] = torch.stack(annotations["valid_span_mask"], dim=0)
 
+        token_encoder_inputs = {
+            "input_ids": token_encodings["input_ids"],
+            "attention_mask": token_encodings["attention_mask"]
+        }
+        if "token_type_ids" in token_encodings:
+            token_encoder_inputs["token_type_ids"] = token_encodings["token_type_ids"]
+        
+        type_encoder_inputs = {
+            "input_ids": type_encodings["input_ids"],
+            "attention_mask": type_encodings["attention_mask"]
+        }
+        if "token_type_ids" in type_encodings:
+            type_encoder_inputs["token_type_ids"] = type_encodings["token_type_ids"]
+
         batch = {
-            "token_input_ids": token_encodings["input_ids"],
-            "token_attention_mask": token_encodings["attention_mask"],
-            "type_input_ids": type_encodings["input_ids"],
-            "type_attention_mask": type_encodings["attention_mask"],
+            "token_encoder_inputs": token_encoder_inputs,
+            "type_encoder_inputs": type_encoder_inputs,
             "labels": annotations
         }
-        
-        if "type_ids" in token_encodings:
-            batch["token_type_ids"] = token_encodings["type_ids"]
-        if "type_ids" in type_encodings:
-            batch["type_type_ids"] = type_encodings["type_ids"]
 
         return batch
 
@@ -434,19 +441,29 @@ class AllLabelsDataCollator:
         annotations["valid_end_mask"] = torch.stack(annotations["valid_end_mask"], dim=0)
         annotations["valid_span_mask"] = torch.stack(annotations["valid_span_mask"], dim=0)
 
+        token_encoder_inputs = {
+            "input_ids": token_encodings["input_ids"],
+            "attention_mask": token_encodings["attention_mask"]
+        }
+        if "token_type_ids" in token_encodings:
+            token_encoder_inputs["token_type_ids"] = token_encodings["token_type_ids"]
+        
+        type_encoder_inputs = {
+            "input_ids": self.type_input_ids,
+            "attention_mask": self.type_attention_mask
+        }
+        if self.type_token_type_ids is not None:
+            type_encoder_inputs["token_type_ids"] = self.type_token_type_ids
+
+        if not annotations:
+            print()
+
         batch = {
-            "token_input_ids": token_encodings["input_ids"],
-            "token_attention_mask": token_encodings["attention_mask"],
-            "type_input_ids": self.type_input_ids,
-            "type_attention_mask": self.type_attention_mask,
+            "token_encoder_inputs": token_encoder_inputs,
+            "type_encoder_inputs": type_encoder_inputs,
             "labels": annotations,
             "id2label": {idx: label for label, idx in self.label2id.items()}
         }
-
-        if "token_type_ids" in token_encodings:
-            batch["token_token_type_ids"] = token_encodings["token_type_ids"]
-        if self.type_token_type_ids is not None:
-            batch["type_token_type_ids"] = self.type_token_type_ids
 
         return batch
 
@@ -596,18 +613,25 @@ class InBatchCompressedSpanCollator:
         annotations["span_subword_indices"] = torch.stack(annotations["span_subword_indices"], dim=0)
         annotations["span_lengths"] = torch.stack(annotations["span_lengths"], dim=0)
 
+        token_encoder_inputs = {
+            "input_ids": token_encodings["input_ids"],
+            "attention_mask": token_encodings["attention_mask"]
+        }
+        if "token_type_ids" in token_encodings:
+            token_encoder_inputs["token_type_ids"] = token_encodings["token_type_ids"]
+        
+        type_encoder_inputs = {
+            "input_ids": type_encodings["input_ids"],
+            "attention_mask": type_encodings["attention_mask"]
+        }
+        if "token_type_ids" in type_encodings:
+            type_encoder_inputs["token_type_ids"] = type_encodings["token_type_ids"]
+
         batch = {
-            "token_input_ids": token_encodings["input_ids"],
-            "token_attention_mask": token_encodings["attention_mask"],
-            "type_input_ids": type_encodings["input_ids"],
-            "type_attention_mask": type_encodings["attention_mask"],
+            "token_encoder_inputs": token_encoder_inputs,
+            "type_encoder_inputs": type_encoder_inputs,
             "labels": annotations
         }
-        
-        if "type_ids" in token_encodings:
-            batch["token_type_ids"] = token_encodings["type_ids"]
-        if "type_ids" in type_encodings:
-            batch["type_type_ids"] = type_encodings["type_ids"]
 
         return batch
 
@@ -758,19 +782,26 @@ class AllLabelsCompressedSpanCollator:
         annotations["span_subword_indices"] = torch.stack(annotations["span_subword_indices"], dim=0)
         annotations["span_lengths"] = torch.stack(annotations["span_lengths"], dim=0)
 
+        token_encoder_inputs = {
+            "input_ids": token_encodings["input_ids"],
+            "attention_mask": token_encodings["attention_mask"]
+        }
+        if "token_type_ids" in token_encodings:
+            token_encoder_inputs["token_type_ids"] = token_encodings["token_type_ids"]
+        
+        type_encoder_inputs = {
+            "input_ids": self.type_input_ids,
+            "attention_mask": self.type_attention_mask
+        }
+        if self.type_token_type_ids is not None:
+            type_encoder_inputs["token_type_ids"] = self.type_token_type_ids
+
         batch = {
-            "token_input_ids": token_encodings["input_ids"],
-            "token_attention_mask": token_encodings["attention_mask"],
-            "type_input_ids": self.type_input_ids,
-            "type_attention_mask": self.type_attention_mask,
+            "token_encoder_inputs": token_encoder_inputs,
+            "type_encoder_inputs": type_encoder_inputs,
             "labels": annotations,
             "id2label": {idx: label for label, idx in self.label2id.items()}
         }
-
-        if "token_type_ids" in token_encodings:
-            batch["token_token_type_ids"] = token_encodings["token_type_ids"]
-        if self.type_token_type_ids is not None:
-            batch["type_token_type_ids"] = self.type_token_type_ids
 
         return batch
 
@@ -937,18 +968,25 @@ class InBatchContrastiveDataCollator:
         annotations["span_lengths"] = torch.stack(annotations["span_lengths"], dim=0)
         annotations["span_subword_indices"] = torch.stack(annotations["span_subword_indices"], dim=0)
 
+        token_encoder_inputs = {
+            "input_ids": token_encodings["input_ids"],
+            "attention_mask": token_encodings["attention_mask"]
+        }
+        if "token_type_ids" in token_encodings:
+            token_encoder_inputs["token_type_ids"] = token_encodings["token_type_ids"]
+
+        type_encoder_inputs = {
+            "input_ids": type_encodings["input_ids"],
+            "attention_mask": type_encodings["attention_mask"]
+        }
+        if "token_type_ids" in type_encodings:
+            type_encoder_inputs["token_type_ids"] = type_encodings["token_type_ids"]
+
         batch = {
-            "token_input_ids": token_encodings["input_ids"],
-            "token_attention_mask": token_encodings["attention_mask"],
-            "type_input_ids": type_encodings["input_ids"],
-            "type_attention_mask": type_encodings["attention_mask"],
+            "token_encoder_inputs": token_encoder_inputs,
+            "type_encoder_inputs": type_encoder_inputs,
             "labels": annotations
         }
-        
-        if "type_ids" in token_encodings:
-            batch["token_type_ids"] = token_encodings["type_ids"]
-        if "type_ids" in type_encodings:
-            batch["type_type_ids"] = type_encodings["type_ids"]
 
         return batch
 
@@ -1067,18 +1105,25 @@ class AllLabelsContrastiveDataCollator:
         annotations["span_subword_indices"] = torch.stack(annotations["span_subword_indices"], dim=0)
         annotations["span_lengths"] = torch.stack(annotations["span_lengths"], dim=0)
 
+        token_encoder_inputs = {
+            "input_ids": token_encodings["input_ids"],
+            "attention_mask": token_encodings["attention_mask"]
+        }
+        if "token_type_ids" in token_encodings:
+            token_encoder_inputs["token_type_ids"] = token_encodings["token_type_ids"]
+        
+        type_encoder_inputs = {
+            "input_ids": self.type_input_ids,
+            "attention_mask": self.type_attention_mask
+        }
+        if self.type_token_type_ids is not None:
+            type_encoder_inputs["token_type_ids"] = self.type_token_type_ids
+
         batch = {
-            "token_input_ids": token_encodings["input_ids"],
-            "token_attention_mask": token_encodings["attention_mask"],
-            "type_input_ids": self.type_input_ids,
-            "type_attention_mask": self.type_attention_mask,
+            "token_encoder_inputs": token_encoder_inputs,
+            "type_encoder_inputs": type_encoder_inputs,
             "labels": annotations,
             "id2label": {idx: label for label, idx in self.label2id.items()}
         }
-
-        if "token_type_ids" in token_encodings:
-            batch["token_token_type_ids"] = token_encodings["token_type_ids"]
-        if self.type_token_type_ids is not None:
-            batch["type_token_type_ids"] = self.type_token_type_ids
 
         return batch

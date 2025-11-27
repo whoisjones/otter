@@ -4,13 +4,17 @@ import torch.nn.functional as F
 
 
 class BCELoss(nn.Module):
-    def forward(self, logits, labels, pos_weight=None, **kwargs):
+    def forward(self, logits, labels, mask=None, pos_weight=None, **kwargs):
         loss = F.binary_cross_entropy_with_logits(
             logits, 
             labels,
             reduction="none",
             pos_weight=pos_weight
         )
+        if mask is not None:
+            loss = (loss * mask).sum() / mask.sum()
+        else:
+            loss = loss.mean()
         return loss
 
 
@@ -20,7 +24,7 @@ class FocalLoss(nn.Module):
         self.alpha = alpha
         self.gamma = gamma
     
-    def forward(self, logits, labels, pos_weight=None, **kwargs):
+    def forward(self, logits, labels, mask=None, pos_weight=None, **kwargs):
         if not (0 <= self.alpha <= 1) and self.alpha != -1:
             raise ValueError(f"Invalid alpha value: {self.alpha}. alpha must be in the range [0,1] or -1 for ignore.")
 
@@ -32,6 +36,11 @@ class FocalLoss(nn.Module):
         if self.alpha >= 0:
             alpha_t = self.alpha * labels + (1 - self.alpha) * (1 - labels)
             loss = alpha_t * loss
+
+        if mask is not None:
+            loss = (loss * mask).sum() / mask.sum()
+        else:
+            loss = loss.mean()
 
         return loss
 
@@ -78,6 +87,32 @@ class ContrastiveLoss(nn.Module):
         else:
             raise TypeError("Does not support dtype " + str(dtype))
 
+class TokenizationAwareLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+    
+    def forward(self, logits: torch.Tensor, labels: torch.Tensor, mask=None, pos_weight=None, **kwargs):
+        base_loss = F.binary_cross_entropy_with_logits(
+            logits, labels.float(), reduction="none"
+        )
+
+        pos = labels.float().sum(dim=tuple(range(1, labels.dim()))).view(-1)
+        total = mask.float().sum(dim=tuple(range(1, mask.dim()))).view(-1)
+        neg = total - pos
+        pos_weight = neg / (pos + 1e-9)
+
+        loss = torch.where(
+            labels.bool(),
+            base_loss * pos_weight.unsqueeze(1).unsqueeze(1),
+            base_loss,
+        )
+
+        if mask is not None:
+            loss = (loss * mask).sum() / mask.float().sum()
+        else:
+            loss = loss.mean()
+        return loss
+
 
 class JGMakerLoss(nn.Module):
     def __init__(self, total_steps: int, k: float = 0.01, threshold: float = 0.5):
@@ -87,7 +122,7 @@ class JGMakerLoss(nn.Module):
         self.threshold = threshold
         self.step = 0
 
-    def forward(self, logits: torch.Tensor, labels: torch.Tensor, pos_weight=None, **kwargs):
+    def forward(self, logits: torch.Tensor, labels: torch.Tensor, mask=None, pos_weight=None, **kwargs):
         if self.training:
             self.step += 1/3
         ce = F.binary_cross_entropy_with_logits(logits, labels, reduction="none", pos_weight=pos_weight)
@@ -111,4 +146,9 @@ class JGMakerLoss(nn.Module):
         weights = types_mask.to(logits.dtype) * alpha + tn.to(logits.dtype) * beta
 
         loss = (ce * weights)
+        if mask is not None:
+            loss = (loss * mask).sum() / mask.sum()
+        else:
+            loss = loss.mean()
+
         return loss

@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from transformers import AutoModel, AutoConfig, PreTrainedModel
+from transformers import AutoModel, AutoConfig, PreTrainedModel, MT5EncoderModel
 from pathlib import Path
 import numpy as np
 from dataclasses import dataclass
@@ -9,7 +9,7 @@ from typing import Optional
 from transformers.file_utils import ModelOutput
 
 from .config import SpanModelConfig
-from .loss import BCELoss, FocalLoss, JGMakerLoss, ContrastiveLoss
+from .loss import BCELoss, FocalLoss, JGMakerLoss, ContrastiveLoss, TokenizationAwareLoss
 
 @dataclass 
 class SpanModelOutput(ModelOutput):
@@ -51,14 +51,23 @@ class SpanModel(PreTrainedModel):
         self.span_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
         self.post_init()
 
-        self.token_encoder = AutoModel.from_pretrained(config.token_encoder, config=token_config)
-        self.type_encoder = AutoModel.from_pretrained(config.type_encoder, config=type_config)
+        if "mt5" in config.token_encoder:
+            self.token_encoder = MT5EncoderModel.from_pretrained(config.token_encoder, config=token_config)
+        else:
+            self.token_encoder = AutoModel.from_pretrained(config.token_encoder, config=token_config)
+        if "mt5" in config.type_encoder:
+            self.type_encoder = MT5EncoderModel.from_pretrained(config.type_encoder, config=type_config)
+        else:
+            self.type_encoder = AutoModel.from_pretrained(config.type_encoder, config=type_config)
+
         if config.loss_fn == "focal":
             self.loss_fn = FocalLoss(alpha=config.focal_alpha, gamma=config.focal_gamma)
         elif config.loss_fn == "jgmaker":
             self.loss_fn = JGMakerLoss(total_steps=3000)
         elif config.loss_fn == "bce":
             self.loss_fn = BCELoss()
+        elif config.loss_fn == "tokenization_aware":
+            self.loss_fn = TokenizationAwareLoss()
         else:
             raise ValueError(f"Invalid loss function: {config.loss_fn}")
 
@@ -77,21 +86,17 @@ class SpanModel(PreTrainedModel):
     
     def forward(
         self, 
-        token_input_ids: torch.Tensor = None, 
-        token_attention_mask: torch.Tensor = None,
-        token_token_type_ids: torch.Tensor = None,
-        type_input_ids: torch.Tensor = None, 
-        type_attention_mask: torch.Tensor = None,
-        type_token_type_ids: torch.Tensor = None,
+        token_encoder_inputs: dict = None,
+        type_encoder_inputs: dict = None,
         labels: dict = None
     ):
-        token_embeds = self.token_encoder(input_ids=token_input_ids, attention_mask=token_attention_mask, token_type_ids=token_token_type_ids)
-        type_embeds = self.type_encoder(input_ids=type_input_ids, attention_mask=type_attention_mask, token_type_ids=type_token_type_ids)
+        token_embeds = self.token_encoder(**token_encoder_inputs)
+        type_embeds = self.type_encoder(**type_encoder_inputs)
         token_output = token_embeds.last_hidden_state
         
         if self.config.type_encoder_pooling == "mean":
-            if type_attention_mask is not None:
-                attention_mask_expanded = type_attention_mask.unsqueeze(-1).expand(type_embeds.last_hidden_state.size()).float()
+            if type_encoder_inputs["attention_mask"] is not None:
+                attention_mask_expanded = type_encoder_inputs["attention_mask"].unsqueeze(-1).expand(type_embeds.last_hidden_state.size()).float()
                 sum_embeddings = torch.sum(type_embeds.last_hidden_state * attention_mask_expanded, dim=1)
                 sum_mask = torch.clamp(attention_mask_expanded.sum(dim=1), min=1e-9)
                 type_output = sum_embeddings / sum_mask
@@ -154,23 +159,22 @@ class SpanModel(PreTrainedModel):
             start_loss = self.loss_fn(
                 start_scores, 
                 labels["start_labels"],
+                mask=labels["valid_start_mask"],
                 pos_weight=start_pos_weight
             )
-            start_loss = (start_loss * labels["valid_start_mask"]).sum() / labels["valid_start_mask"].sum()
 
             end_loss = self.loss_fn(
                 end_scores,
                 labels["end_labels"],
+                mask=labels["valid_end_mask"],
                 pos_weight=end_pos_weight
             )
-            end_loss = (end_loss * labels["valid_end_mask"]).sum() / labels["valid_end_mask"].sum()
-
             span_loss = self.loss_fn(
                 span_scores, 
                 labels["span_labels"],
+                mask=labels["valid_span_mask"],
                 pos_weight=span_pos_weight
             )
-            span_loss = (span_loss * labels["valid_span_mask"]).sum() / labels["valid_span_mask"].sum()
             loss = self.config.start_loss_weight * start_loss + self.config.end_loss_weight * end_loss + self.config.span_loss_weight * span_loss
             return SpanModelOutput(loss=loss, start_logits=start_scores, end_logits=end_scores, span_logits=span_scores)
         else:
@@ -205,12 +209,17 @@ class SpanModel(PreTrainedModel):
         # Load token and type encoder models (matching __init__ with add_pooling_layer=False)
         token_config = AutoConfig.from_pretrained(model.config.token_encoder)
         type_config = AutoConfig.from_pretrained(model.config.type_encoder)
-        model.token_encoder = AutoModel.from_pretrained(str(path / "token_encoder"), config=token_config, add_pooling_layer=False)
-        model.type_encoder = AutoModel.from_pretrained(str(path / "type_encoder"), config=type_config, add_pooling_layer=False)
         
-        # Load model state dict, filtering out pooling layer keys since encoders are loaded without pooling
+        if "mt5" in model.config.token_encoder:
+            model.token_encoder = MT5EncoderModel.from_pretrained(str(path / "token_encoder"), config=token_config)
+        else:
+            model.token_encoder = AutoModel.from_pretrained(str(path / "token_encoder"), config=token_config)
+        if "mt5" in model.config.type_encoder:
+            model.type_encoder = MT5EncoderModel.from_pretrained(str(path / "type_encoder"), config=type_config)
+        else:
+            model.type_encoder = AutoModel.from_pretrained(str(path / "type_encoder"), config=type_config)
+        
         state_dict = torch.load(path / "model.pt", map_location="cpu")
-        # Filter out pooling layer keys that don't exist in the model structure
         model_state_keys = set(model.state_dict().keys())
         filtered_state_dict = {k: v for k, v in state_dict.items() 
                               if k in model_state_keys}
@@ -247,14 +256,23 @@ class CompressedSpanModel(PreTrainedModel):
         self.span_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
         self.post_init()
 
-        self.token_encoder = AutoModel.from_pretrained(config.token_encoder, config=token_config)
-        self.type_encoder = AutoModel.from_pretrained(config.type_encoder, config=type_config)
+        if "mt5" in config.token_encoder:
+            self.token_encoder = MT5EncoderModel.from_pretrained(config.token_encoder, config=token_config)
+        else:
+            self.token_encoder = AutoModel.from_pretrained(config.token_encoder, config=token_config)
+        if "mt5" in config.type_encoder:
+            self.type_encoder = MT5EncoderModel.from_pretrained(config.type_encoder, config=type_config)
+        else:
+            self.type_encoder = AutoModel.from_pretrained(config.type_encoder, config=type_config)
+
         if config.loss_fn == "focal":
             self.loss_fn = FocalLoss(alpha=config.focal_alpha, gamma=config.focal_gamma)
         elif config.loss_fn == "jgmaker":
             self.loss_fn = JGMakerLoss(total_steps=3000)
         elif config.loss_fn == "bce":
             self.loss_fn = BCELoss()
+        elif config.loss_fn == "tokenization_aware":
+            self.loss_fn = TokenizationAwareLoss()
         else:
             raise ValueError(f"Invalid loss function: {config.loss_fn}")
 
@@ -279,21 +297,17 @@ class CompressedSpanModel(PreTrainedModel):
     
     def forward(
         self, 
-        token_input_ids: torch.Tensor = None, 
-        token_attention_mask: torch.Tensor = None,
-        token_token_type_ids: torch.Tensor = None,
-        type_input_ids: torch.Tensor = None, 
-        type_attention_mask: torch.Tensor = None,
-        type_token_type_ids: torch.Tensor = None,
+        token_encoder_inputs: dict = None,
+        type_encoder_inputs: dict = None,
         labels: dict = None
     ):
-        token_embeds = self.token_encoder(input_ids=token_input_ids, attention_mask=token_attention_mask, token_type_ids=token_token_type_ids)
-        type_embeds = self.type_encoder(input_ids=type_input_ids, attention_mask=type_attention_mask, token_type_ids=type_token_type_ids)
+        token_embeds = self.token_encoder(**token_encoder_inputs)
+        type_embeds = self.type_encoder(**type_encoder_inputs)
         token_output = token_embeds.last_hidden_state
         
         if self.config.type_encoder_pooling == "mean":
-            if type_attention_mask is not None:
-                attention_mask_expanded = type_attention_mask.unsqueeze(-1).expand(type_embeds.last_hidden_state.size()).float()
+            if type_encoder_inputs["attention_mask"] is not None:
+                attention_mask_expanded = type_encoder_inputs["attention_mask"].unsqueeze(-1).expand(type_embeds.last_hidden_state.size()).float()
                 sum_embeddings = torch.sum(type_embeds.last_hidden_state * attention_mask_expanded, dim=1)
                 sum_mask = torch.clamp(attention_mask_expanded.sum(dim=1), min=1e-9)
                 type_output = sum_embeddings / sum_mask
@@ -321,10 +335,7 @@ class CompressedSpanModel(PreTrainedModel):
             dim=2
         )
 
-        token_span_output = F.normalize(
-            self.dropout(self.token_span_linear(span_hidden)), dim=-1
-        )
-
+        token_span_output = F.normalize(self.dropout(self.token_span_linear(span_hidden)), dim=-1)
         span_scores = self.span_logit_scale.exp() * torch.einsum("BSH,CH->BCS", token_span_output, type_output)
 
         if labels is not None:
@@ -343,23 +354,23 @@ class CompressedSpanModel(PreTrainedModel):
             start_loss = self.loss_fn(
                 start_scores, 
                 labels["start_labels"],
+                mask=labels["valid_start_mask"],
                 pos_weight=start_pos_weight
             )
-            start_loss = (start_loss * labels["valid_start_mask"]).sum() / labels["valid_start_mask"].sum()
 
             end_loss = self.loss_fn(
                 end_scores,
                 labels["end_labels"],
+                mask=labels["valid_end_mask"],
                 pos_weight=end_pos_weight
             )
-            end_loss = (end_loss * labels["valid_end_mask"]).sum() / labels["valid_end_mask"].sum()
 
             span_loss = self.loss_fn(
                 span_scores, 
                 labels["span_labels"],
+                mask=labels["valid_span_mask"],
                 pos_weight=span_pos_weight
             )
-            span_loss = (span_loss * labels["valid_span_mask"]).sum() / labels["valid_span_mask"].sum()
             loss = self.config.start_loss_weight * start_loss + self.config.end_loss_weight * end_loss + self.config.span_loss_weight * span_loss
             return SpanModelOutput(loss=loss, start_logits=start_scores, end_logits=end_scores, span_logits=span_scores)
         else:
@@ -391,15 +402,18 @@ class CompressedSpanModel(PreTrainedModel):
         # Initialize model with config
         model = cls(config)
         
-        # Load token and type encoder models (matching __init__ with add_pooling_layer=False)
         token_config = AutoConfig.from_pretrained(model.config.token_encoder)
         type_config = AutoConfig.from_pretrained(model.config.type_encoder)
-        model.token_encoder = AutoModel.from_pretrained(str(path / "token_encoder"), config=token_config, add_pooling_layer=False)
-        model.type_encoder = AutoModel.from_pretrained(str(path / "type_encoder"), config=type_config, add_pooling_layer=False)
+        if "mt5" in model.config.token_encoder:
+            model.token_encoder = MT5EncoderModel.from_pretrained(str(path / "token_encoder"), config=token_config)
+        else:
+            model.token_encoder = AutoModel.from_pretrained(str(path / "token_encoder"), config=token_config)
+        if "mt5" in model.config.type_encoder:
+            model.type_encoder = MT5EncoderModel.from_pretrained(str(path / "type_encoder"), config=type_config)
+        else:
+            model.type_encoder = AutoModel.from_pretrained(str(path / "type_encoder"), config=type_config)
         
-        # Load model state dict, filtering out pooling layer keys since encoders are loaded without pooling
         state_dict = torch.load(path / "model.pt", map_location="cpu")
-        # Filter out pooling layer keys that don't exist in the model structure
         model_state_keys = set(model.state_dict().keys())
         filtered_state_dict = {k: v for k, v in state_dict.items() 
                               if k in model_state_keys}
@@ -435,8 +449,14 @@ class ContrastiveSpanModel(PreTrainedModel):
         self.span_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
         self.post_init()
 
-        self.token_encoder = AutoModel.from_pretrained(config.token_encoder, config=token_config)
-        self.type_encoder = AutoModel.from_pretrained(config.type_encoder, config=type_config)
+        if "mt5" in config.token_encoder:
+            self.token_encoder = MT5EncoderModel.from_pretrained(config.token_encoder, config=token_config)
+        else:
+            self.token_encoder = AutoModel.from_pretrained(config.token_encoder, config=token_config)
+        if "mt5" in config.type_encoder:
+            self.type_encoder = MT5EncoderModel.from_pretrained(config.type_encoder, config=type_config)
+        else:
+            self.type_encoder = AutoModel.from_pretrained(config.type_encoder, config=type_config)
         if config.loss_fn != "contrastive":
             raise ValueError(f"Invalid loss function: {config.loss_fn}")
         self.loss_fn = ContrastiveLoss()
@@ -462,21 +482,17 @@ class ContrastiveSpanModel(PreTrainedModel):
     
     def forward(
         self, 
-        token_input_ids: torch.Tensor = None, 
-        token_attention_mask: torch.Tensor = None,
-        token_token_type_ids: torch.Tensor = None,
-        type_input_ids: torch.Tensor = None, 
-        type_attention_mask: torch.Tensor = None,
-        type_token_type_ids: torch.Tensor = None,
+        token_encoder_inputs: dict = None,
+        type_encoder_inputs: dict = None,
         labels: dict = None
     ):
-        token_embeds = self.token_encoder(input_ids=token_input_ids, attention_mask=token_attention_mask, token_type_ids=token_token_type_ids)
-        type_embeds = self.type_encoder(input_ids=type_input_ids, attention_mask=type_attention_mask, token_type_ids=type_token_type_ids)
+        token_embeds = self.token_encoder(**token_encoder_inputs)
+        type_embeds = self.type_encoder(**type_encoder_inputs)
         token_output = token_embeds.last_hidden_state
 
         if self.config.type_encoder_pooling == "mean":
-            if type_attention_mask is not None:
-                attention_mask_expanded = type_attention_mask.unsqueeze(-1).expand(type_embeds.last_hidden_state.size()).float()
+            if type_encoder_inputs["attention_mask"] is not None:
+                attention_mask_expanded = type_encoder_inputs["attention_mask"].unsqueeze(-1).expand(type_embeds.last_hidden_state.size()).float()
                 sum_embeddings = torch.sum(type_embeds.last_hidden_state * attention_mask_expanded, dim=1)
                 sum_mask = torch.clamp(attention_mask_expanded.sum(dim=1), min=1e-9)
                 type_output = sum_embeddings / sum_mask
@@ -574,21 +590,21 @@ class ContrastiveSpanModel(PreTrainedModel):
         """Load model from saved checkpoint."""
         path = Path(path)
         
-        # Load config
         config = SpanModelConfig.from_pretrained(str(path))
         
-        # Initialize model with config
         model = cls(config)
         
-        # Load token and type encoder models (matching __init__ with add_pooling_layer=False)
         token_config = AutoConfig.from_pretrained(model.config.token_encoder)
         type_config = AutoConfig.from_pretrained(model.config.type_encoder)
-        model.token_encoder = AutoModel.from_pretrained(str(path / "token_encoder"), config=token_config, add_pooling_layer=False)
-        model.type_encoder = AutoModel.from_pretrained(str(path / "type_encoder"), config=type_config, add_pooling_layer=False)
-        
-        # Load model state dict, filtering out pooling layer keys since encoders are loaded without pooling
+        if "mt5" in model.config.token_encoder:
+            model.token_encoder = MT5EncoderModel.from_pretrained(str(path / "token_encoder"), config=token_config)
+        else:
+            model.token_encoder = AutoModel.from_pretrained(str(path / "token_encoder"), config=token_config)
+        if "mt5" in model.config.type_encoder:
+            model.type_encoder = MT5EncoderModel.from_pretrained(str(path / "type_encoder"), config=type_config)
+        else:
+            model.type_encoder = AutoModel.from_pretrained(str(path / "type_encoder"), config=type_config)
         state_dict = torch.load(path / "model.pt", map_location="cpu")
-        # Filter out pooling layer keys that don't exist in the model structure
         model_state_keys = set(model.state_dict().keys())
         filtered_state_dict = {k: v for k, v in state_dict.items() 
                               if k in model_state_keys}
