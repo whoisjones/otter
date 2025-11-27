@@ -1,4 +1,4 @@
-from transformers import AutoTokenizer, AutoModelForTokenClassification, Trainer, TrainingArguments, DataCollatorForTokenClassification
+from transformers import AutoTokenizer, AutoModelForTokenClassification, MT5ForTokenClassification, Trainer, TrainingArguments, DataCollatorForTokenClassification
 from datasets import load_dataset
 import evaluate
 import numpy as np
@@ -7,20 +7,23 @@ import torch
 def main():
     # Set seeds
     torch.manual_seed(42)
+    model_name = "google/rembert"
     
     # Load dataset and tokenizer
     dataset = load_dataset('pythainlp/thainer-corpus-v2.2', revision='convert/parquet')
-    tokenizer = AutoTokenizer.from_pretrained("xlm-roberta-base")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    text_column = "words"
+    label_column = "ner"
     
     # Filter empty samples
     def is_not_empty(example):
-        return len([w for w in example["words"] if w.strip()]) > 0
+        return len([w for w in example[text_column] if w.strip()]) > 0
     
     for split in dataset.keys():
         dataset[split] = dataset[split].filter(is_not_empty)
     
     # Get label names first to create proper B->I mapping
-    label_names = dataset['train'].features["ner"].feature.names
+    label_names = dataset['train'].features[label_column].feature.names
     id2label = {i: label for i, label in enumerate(label_names)}
     label2id = {v: k for k, v in id2label.items()}
     
@@ -56,9 +59,9 @@ def main():
     
     def tokenize_and_align_labels(examples):
         tokenized_inputs = tokenizer(
-            examples["words"], truncation=True, is_split_into_words=True
+            examples[text_column], truncation=True, is_split_into_words=True
         )
-        all_labels = examples["ner"]
+        all_labels = examples[label_column]
         new_labels = []
         for i, labels in enumerate(all_labels):
             word_ids = tokenized_inputs.word_ids(i)
@@ -76,7 +79,7 @@ def main():
     # Setup model
     num_labels = len(label_names)
     model = AutoModelForTokenClassification.from_pretrained(
-        "xlm-roberta-base",
+        model_name,
         id2label=id2label,
         label2id=label2id,
         num_labels=num_labels,
@@ -110,10 +113,12 @@ def main():
         eval_strategy="epoch",
         save_strategy="epoch",
         save_total_limit=2,
-        learning_rate=2e-5,
+        learning_rate=5e-5,
         num_train_epochs=3,
         weight_decay=0.01,
         seed=42,
+        logging_steps=50,
+        lr_scheduler_type="linear",
     )
     
     # Setup trainer
