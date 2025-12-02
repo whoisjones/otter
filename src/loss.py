@@ -12,9 +12,9 @@ class BCELoss(nn.Module):
             pos_weight=pos_weight
         )
         if mask is not None:
-            loss = (loss * mask).sum() / mask.sum()
+            loss = (loss * mask).sum()
         else:
-            loss = loss.mean()
+            loss = loss.sum()
         return loss
 
 
@@ -38,9 +38,9 @@ class FocalLoss(nn.Module):
             loss = alpha_t * loss
 
         if mask is not None:
-            loss = (loss * mask).sum() / mask.sum()
+            loss = (loss * mask).sum()
         else:
-            loss = loss.mean()
+            loss = loss.sum()
 
         return loss
 
@@ -108,9 +108,9 @@ class TokenizationAwareLoss(nn.Module):
         )
 
         if mask is not None:
-            loss = (loss * mask).sum() / mask.float().sum()
+            loss = (loss * mask).sum()
         else:
-            loss = loss.mean()
+            loss = loss.sum()
         return loss
 
 
@@ -147,8 +147,8 @@ class JGMakerLoss(nn.Module):
 
         loss = (ce * weights)
         if mask is not None:
-            loss = (loss * mask).sum() / mask.sum()
+            loss = (loss * mask).sum()
         else:
-            loss = loss.mean()
+            loss = loss.sum()
 
         return loss
