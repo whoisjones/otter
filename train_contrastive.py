@@ -69,27 +69,47 @@ def main():
         logger.warning(f"Setting prediction threshold to 'cls' for contrastive learning.")
         model_args.prediction_threshold = "cls"
 
-    config = SpanModelConfig(
-        token_encoder=model_args.token_encoder,
-        type_encoder=model_args.type_encoder,
-        loss_fn=model_args.loss_fn,
-        focal_alpha=model_args.focal_alpha,
-        focal_gamma=model_args.focal_gamma,
-        max_span_length=data_args.max_span_length,
-        dropout=model_args.dropout,
-        linear_hidden_size=model_args.linear_hidden_size,
-        span_width_embedding_size=model_args.span_width_embedding_size,
-        init_temperature=model_args.init_temperature,
-        start_loss_weight=model_args.start_loss_weight,
-        end_loss_weight=model_args.end_loss_weight,
-        span_loss_weight=model_args.span_loss_weight,
-        start_pos_weight=model_args.start_pos_weight,
-        end_pos_weight=model_args.end_pos_weight,
-        span_pos_weight=model_args.span_pos_weight,
-        type_encoder_pooling=model_args.type_encoder_pooling,
-        prediction_threshold=model_args.prediction_threshold
-    )
-    model = ContrastiveSpanModel(config=config)
+    # Load model from checkpoint if provided, otherwise initialize from scratch
+    if model_args.model_checkpoint is not None:
+        if accelerator.is_main_process:
+            logger.info(f"Loading model from checkpoint: {model_args.model_checkpoint}")
+        # Load config from checkpoint
+        config = SpanModelConfig.from_pretrained(model_args.model_checkpoint)
+        # Override max_span_length from data_args as it's data-dependent
+        config.max_span_length = data_args.max_span_length
+        # Ensure prediction_threshold is "cls" for contrastive learning
+        config.prediction_threshold = "cls"
+        # Load model from checkpoint
+        model = ContrastiveSpanModel.from_pretrained(model_args.model_checkpoint)
+        # Update model config
+        model.config = config
+    else:
+        # Validate that token_encoder and type_encoder are provided
+        if model_args.token_encoder is None or model_args.type_encoder is None:
+            raise ValueError(
+                "Either 'model_checkpoint' must be provided, or both 'token_encoder' and 'type_encoder' must be provided."
+            )
+        config = SpanModelConfig(
+            token_encoder=model_args.token_encoder,
+            type_encoder=model_args.type_encoder,
+            loss_fn=model_args.loss_fn,
+            focal_alpha=model_args.focal_alpha,
+            focal_gamma=model_args.focal_gamma,
+            max_span_length=data_args.max_span_length,
+            dropout=model_args.dropout,
+            linear_hidden_size=model_args.linear_hidden_size,
+            span_width_embedding_size=model_args.span_width_embedding_size,
+            init_temperature=model_args.init_temperature,
+            start_loss_weight=model_args.start_loss_weight,
+            end_loss_weight=model_args.end_loss_weight,
+            span_loss_weight=model_args.span_loss_weight,
+            start_pos_weight=model_args.start_pos_weight,
+            end_pos_weight=model_args.end_pos_weight,
+            span_pos_weight=model_args.span_pos_weight,
+            type_encoder_pooling=model_args.type_encoder_pooling,
+            prediction_threshold=model_args.prediction_threshold
+        )
+        model = ContrastiveSpanModel(config=config)
     
     token_encoder_tokenizer = AutoTokenizer.from_pretrained(config.token_encoder)
     type_encoder_tokenizer = AutoTokenizer.from_pretrained(config.type_encoder)

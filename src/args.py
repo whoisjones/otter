@@ -8,11 +8,13 @@ class ModelArguments:
     Arguments for Binder.
     """
 
-    token_encoder: str = field(
-        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
+    token_encoder: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models. Required if model_checkpoint is not provided."}
     )
-    type_encoder: str = field(
-        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
+    type_encoder: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models. Required if model_checkpoint is not provided."}
     )
     dropout: float = field(
         default=0.1, metadata={"help": "Dropout rate for hidden states."}
@@ -71,6 +73,20 @@ class ModelArguments:
             "help": "Gamma for the focal loss."
         },
     )
+    model_checkpoint: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Path to a pretrained span model checkpoint to load from. If provided, the model will be loaded from this checkpoint instead of being initialized from scratch."
+        },
+    )
+
+    def __post_init__(self):
+        """Validate that either model_checkpoint is provided, or both token_encoder and type_encoder are provided."""
+        if self.model_checkpoint is None:
+            if self.token_encoder is None or self.type_encoder is None:
+                raise ValueError(
+                    "Either 'model_checkpoint' must be provided, or both 'token_encoder' and 'type_encoder' must be provided."
+                )
 
 
 @dataclass
