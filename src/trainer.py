@@ -35,7 +35,7 @@ def evaluate(model, dataloader, accelerator):
                 labels=batch["labels"]
             )
 
-            if output.loss is not None:
+            if "loss" in output:
                 loss = output.loss
                 total_loss += loss.detach().item()
                 num_batches += 1
@@ -63,10 +63,13 @@ def evaluate(model, dataloader, accelerator):
             pbar.update(1)
         pbar.close()
 
-    avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
-    
-    metrics = finalize_metrics(metrics_by_type)
-    metrics["loss"] = avg_loss
+    if total_loss > 0:
+        avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+        metrics = finalize_metrics(metrics_by_type)
+        metrics["loss"] = avg_loss
+    else:
+        metrics = finalize_metrics(metrics_by_type)
+        metrics["loss"] = 0.0
 
     torch.cuda.empty_cache()
     

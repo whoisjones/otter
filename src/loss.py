@@ -80,7 +80,7 @@ class ContrastiveLoss(nn.Module):
     def tiny_value_of_dtype(self, dtype: torch.dtype) -> float:
         if not dtype.is_floating_point:
             raise TypeError("Only supports floating point dtypes.")
-        if dtype == torch.float or dtype == torch.double:
+        if dtype == torch.float or dtype == torch.double or dtype == torch.bfloat16:
             return 1e-13
         elif dtype == torch.half:
             return 1e-4

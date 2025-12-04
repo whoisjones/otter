@@ -69,22 +69,15 @@ def main():
         logger.warning(f"Setting prediction threshold to 'cls' for contrastive learning.")
         model_args.prediction_threshold = "cls"
 
-    # Load model from checkpoint if provided, otherwise initialize from scratch
     if model_args.model_checkpoint is not None:
         if accelerator.is_main_process:
             logger.info(f"Loading model from checkpoint: {model_args.model_checkpoint}")
-        # Load config from checkpoint
         config = SpanModelConfig.from_pretrained(model_args.model_checkpoint)
-        # Override max_span_length from data_args as it's data-dependent
         config.max_span_length = data_args.max_span_length
-        # Ensure prediction_threshold is "cls" for contrastive learning
         config.prediction_threshold = "cls"
-        # Load model from checkpoint
         model = ContrastiveSpanModel.from_pretrained(model_args.model_checkpoint)
-        # Update model config
         model.config = config
     else:
-        # Validate that token_encoder and type_encoder are provided
         if model_args.token_encoder is None or model_args.type_encoder is None:
             raise ValueError(
                 "Either 'model_checkpoint' must be provided, or both 'token_encoder' and 'type_encoder' must be provided."

@@ -857,12 +857,10 @@ class InBatchContrastiveDataCollator:
             offset_mapping = token_encodings.pop("offset_mapping")
 
         annotations = {
-            "label_batch_indices": [],
-            "label_subword_indices": [],
-            "label_spans_idx": [],
-            "label_start_mask": [],
-            "label_end_mask": [],
-            "label_span_mask": [],
+            "ner_indices": [[], [], [], [], []],
+            "ner_start_mask": [],
+            "ner_end_mask": [],
+            "ner_span_mask": [],
             "start_negative_mask": [],
             "end_negative_mask": [],
             "span_negative_mask": [],
@@ -883,16 +881,15 @@ class InBatchContrastiveDataCollator:
 
             span_lookup = {span: idx for idx, span in enumerate(spans_idx)}
             
-            # Include CLS token
-            start_mask[0] = 1
-            end_mask[0] = 1
-            span_mask[span_lookup[(0, 0)]] = 1
+            span_subword_indices = torch.tensor(spans_idx)
+            span_lengths = torch.tensor(span_lengths)
 
             start_negative_mask = torch.tensor([start_mask[:] for _ in unique_types])
             end_negative_mask = torch.tensor([end_mask[:] for _ in unique_types])
             span_negative_mask = torch.tensor([span_mask[:] for _ in unique_types])
-            spans_idx = torch.tensor(spans_idx)
-            span_lengths = torch.tensor(span_lengths)
+            start_negative_mask[:, 0] = 1
+            end_negative_mask[:, 0] = 1
+            span_negative_mask[:, 0] = 1
 
             for label in sample_labels:
                 if self.format == 'text':
@@ -917,6 +914,12 @@ class InBatchContrastiveDataCollator:
                         end_negative_mask[type2id_batch[label["label"]], end_label_index] = 0
                         span_negative_mask[type2id_batch[label["label"]], span_lookup[(start_label_index, end_label_index)]] = 0
 
+                        annotations["ner_indices"][0].append(i)
+                        annotations["ner_indices"][1].append(type2id_batch[label["label"]])
+                        annotations["ner_indices"][2].append(start_label_index)
+                        annotations["ner_indices"][3].append(end_label_index)
+                        annotations["ner_indices"][4].append(span_lookup[(start_label_index, end_label_index)])
+
                 elif self.format == 'tokens':
                     word_ids = token_encodings.word_ids(i)
                     if label["start"] in word_ids and label["end"] - 1 in word_ids:
@@ -930,43 +933,51 @@ class InBatchContrastiveDataCollator:
                         if end_label_index - start_label_index + 1 >= self.max_span_length:
                             continue
 
+                        if start_label_index > end_label_index:
+                            continue
+
                         start_negative_mask[type2id_batch[label["label"]], start_label_index] = 0
                         end_negative_mask[type2id_batch[label["label"]], end_label_index] = 0
                         span_negative_mask[type2id_batch[label["label"]], span_lookup[(start_label_index, end_label_index)]] = 0
-
-                annotations["label_batch_indices"].append([i, type2id_batch[label["label"]]])
-                annotations["label_subword_indices"].append((start_label_index, end_label_index))
+                        
+                        annotations["ner_indices"][0].append(i)
+                        annotations["ner_indices"][1].append(type2id_batch[label["label"]])
+                        annotations["ner_indices"][2].append(start_label_index)
+                        annotations["ner_indices"][3].append(end_label_index)
+                        annotations["ner_indices"][4].append(span_lookup[(start_label_index, end_label_index)])
 
             annotations["start_negative_mask"].append(start_negative_mask)
             annotations["end_negative_mask"].append(end_negative_mask)
             annotations["span_negative_mask"].append(span_negative_mask)
-            annotations["span_subword_indices"].append(spans_idx)
+            annotations["span_subword_indices"].append(span_subword_indices)
             annotations["span_lengths"].append(span_lengths)
 
-        annotations["start_negative_mask"] = torch.stack(annotations["start_negative_mask"], dim=0)
-        annotations["end_negative_mask"] = torch.stack(annotations["end_negative_mask"], dim=0)
-        annotations["span_negative_mask"] = torch.stack(annotations["span_negative_mask"], dim=0)
-
-        for (batch_idx, class_idx), (start_subword_index, end_subword_index) in zip(annotations["label_batch_indices"], annotations["label_subword_indices"]):
-            start_mask = annotations["start_negative_mask"][batch_idx, class_idx].detach().clone()
-            start_mask[start_subword_index] = 1
-            end_mask = annotations["end_negative_mask"][batch_idx, class_idx].detach().clone()
-            end_mask[end_subword_index] = 1
-            span_mask = annotations["span_negative_mask"][batch_idx, class_idx].detach().clone()
-            span_mask[span_lookup[(start_subword_index, end_subword_index)]] = 1
-
-            annotations["label_start_mask"].append(start_mask)
-            annotations["label_end_mask"].append(end_mask)
-            annotations["label_span_mask"].append(span_mask)
-
-        annotations["label_span_idx"] = [span_lookup[span_idx] for span_idx in annotations["label_subword_indices"]]
-        annotations["label_batch_indices"] = list(map(list, zip(*annotations["label_batch_indices"])))
-        annotations["label_subword_indices"] = list(map(list, zip(*annotations["label_subword_indices"])))
-        annotations["label_start_mask"] = torch.stack(annotations["label_start_mask"], dim=0)
-        annotations["label_end_mask"] = torch.stack(annotations["label_end_mask"], dim=0)
-        annotations["label_span_mask"] = torch.stack(annotations["label_span_mask"], dim=0)
-        annotations["span_lengths"] = torch.stack(annotations["span_lengths"], dim=0)
+        annotations['start_negative_mask'] = torch.stack(annotations['start_negative_mask'], dim=0)
+        annotations['end_negative_mask'] = torch.stack(annotations['end_negative_mask'], dim=0)
+        annotations['span_negative_mask'] = torch.stack(annotations['span_negative_mask'], dim=0)
         annotations["span_subword_indices"] = torch.stack(annotations["span_subword_indices"], dim=0)
+        annotations["span_lengths"] = torch.stack(annotations["span_lengths"], dim=0)
+
+        for i in range(len(annotations["ner_indices"][0])):
+            batch_index = annotations["ner_indices"][0][i]
+            type_index = annotations["ner_indices"][1][i]
+            start_label_index = annotations["ner_indices"][2][i]
+            end_label_index = annotations["ner_indices"][3][i]
+            span_index = annotations["ner_indices"][4][i]
+            
+            ner_start_mask = annotations['start_negative_mask'][batch_index, type_index].detach().clone()
+            ner_start_mask[start_label_index] = 1
+            annotations["ner_start_mask"].append(ner_start_mask)
+            ner_end_mask = annotations['end_negative_mask'][batch_index,type_index].detach().clone()
+            ner_end_mask[end_label_index] = 1
+            annotations["ner_end_mask"].append(ner_end_mask)
+            ner_span_mask = annotations['span_negative_mask'][batch_index, type_index].detach().clone()
+            ner_span_mask[span_index] = 1
+            annotations["ner_span_mask"].append(ner_span_mask)
+
+        annotations['ner_start_mask'] = torch.stack(annotations['ner_start_mask'], dim=0)
+        annotations['ner_end_mask'] = torch.stack(annotations['ner_end_mask'], dim=0)
+        annotations['ner_span_mask'] = torch.stack(annotations['ner_span_mask'], dim=0)
 
         token_encoder_inputs = {
             "input_ids": token_encodings["input_ids"],
@@ -974,7 +985,7 @@ class InBatchContrastiveDataCollator:
         }
         if "token_type_ids" in token_encodings:
             token_encoder_inputs["token_type_ids"] = token_encodings["token_type_ids"]
-
+        
         type_encoder_inputs = {
             "input_ids": type_encodings["input_ids"],
             "attention_mask": type_encodings["attention_mask"]
@@ -989,6 +1000,7 @@ class InBatchContrastiveDataCollator:
         }
 
         return batch
+
 
 class AllLabelsContrastiveDataCollator:
     def __init__(self, tokenizer, type_encodings, label2id, max_seq_length=512, max_span_length=30, format='text', loss_masking='none'):
@@ -1027,9 +1039,9 @@ class AllLabelsContrastiveDataCollator:
 
         annotations = {
             "ner": [],
-            "valid_span_mask": [],
             "span_lengths": [],
-            "span_subword_indices": []
+            "span_subword_indices": [],
+            "valid_span_mask": []
         }
 
         for i in range(len(token_encodings['input_ids'])):
@@ -1044,8 +1056,8 @@ class AllLabelsContrastiveDataCollator:
                 text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_all_spans_mask(input_ids, sequence_ids, self.max_span_length)
 
             span_subword_indices = torch.tensor(spans_idx)
-            valid_span_mask = torch.tensor([span_mask[:] for _ in range(len(self.label2id))])
             span_lengths = torch.tensor(span_lengths)
+            valid_span_mask = torch.tensor([span_mask[:] for _ in range(len(self.label2id))])
 
             annotation = []
 
@@ -1097,13 +1109,13 @@ class AllLabelsContrastiveDataCollator:
                         })
 
             annotations["ner"].append(annotation)
-            annotations["valid_span_mask"].append(valid_span_mask)
             annotations["span_subword_indices"].append(span_subword_indices)
             annotations["span_lengths"].append(span_lengths)
+            annotations["valid_span_mask"].append(valid_span_mask)
 
-        annotations["valid_span_mask"] = torch.stack(annotations["valid_span_mask"], dim=0)
         annotations["span_subword_indices"] = torch.stack(annotations["span_subword_indices"], dim=0)
         annotations["span_lengths"] = torch.stack(annotations["span_lengths"], dim=0)
+        annotations["valid_span_mask"] = torch.stack(annotations["valid_span_mask"], dim=0)
 
         token_encoder_inputs = {
             "input_ids": token_encodings["input_ids"],
@@ -1111,7 +1123,7 @@ class AllLabelsContrastiveDataCollator:
         }
         if "token_type_ids" in token_encodings:
             token_encoder_inputs["token_type_ids"] = token_encodings["token_type_ids"]
-        
+
         type_encoder_inputs = {
             "input_ids": self.type_input_ids,
             "attention_mask": self.type_attention_mask

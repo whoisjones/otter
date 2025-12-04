@@ -338,7 +338,7 @@ class CompressedSpanModel(PreTrainedModel):
         token_span_output = F.normalize(self.dropout(self.token_span_linear(span_hidden)), dim=-1)
         span_scores = self.span_logit_scale.exp() * torch.einsum("BSH,CH->BCS", token_span_output, type_output)
 
-        if labels is not None:
+        if labels is not None and self.training:
             start_pos_weight = None
             if self.config.start_pos_weight is not None:
                 start_pos_weight = torch.tensor(self.config.start_pos_weight, device=start_scores.device, dtype=start_scores.dtype)
@@ -442,7 +442,6 @@ class ContrastiveSpanModel(PreTrainedModel):
         self.token_start_linear = mlp(token_config.hidden_size, config.linear_hidden_size, config.dropout)
         self.token_end_linear = mlp(token_config.hidden_size, config.linear_hidden_size, config.dropout)
         self.token_span_linear = mlp(config.linear_hidden_size * 2 + config.span_width_embedding_size, config.linear_hidden_size, config.dropout)
-        self.fusion_linear = mlp(config.linear_hidden_size * 2, config.linear_hidden_size, config.dropout)
         self.width_embedding = nn.Embedding(config.max_span_length + 1, config.span_width_embedding_size, padding_idx=0)
         self.start_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
         self.end_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
@@ -529,7 +528,7 @@ class ContrastiveSpanModel(PreTrainedModel):
 
         span_scores = self.span_logit_scale.exp() * torch.einsum("BSH,CH->BCS", token_span_output, type_output)
 
-        if "ner" not in labels:
+        if labels is not None and self.training:
             flat_start_scores = start_scores.reshape(B * C, S)
             flat_end_scores = end_scores.reshape(B * C, S)
             flat_span_scores = span_scores.reshape(B * C, span_scores.size(-1))
@@ -547,16 +546,12 @@ class ContrastiveSpanModel(PreTrainedModel):
                 self.config.span_loss_weight * span_threshold_loss
             )
 
-            label_batch_indices = labels["label_batch_indices"]
-            label_subword_indices = labels["label_subword_indices"]
-            label_span_idx = labels["label_span_idx"]
-            label_start_mask = labels["label_start_mask"]
-            label_end_mask = labels["label_end_mask"]
-            label_span_mask = labels["label_span_mask"]
+            batch_indices, type_indices, start_indices, end_indices, span_indices = labels["ner_indices"]
+            ner_start_mask, ner_end_mask, ner_span_mask = labels["ner_start_mask"], labels["ner_end_mask"], labels["ner_span_mask"]
 
-            start_loss = self.loss_fn(start_scores[tuple(label_batch_indices)], label_subword_indices[0], label_start_mask)
-            end_loss = self.loss_fn(end_scores[tuple(label_batch_indices)], label_subword_indices[1], label_end_mask)
-            span_loss = self.loss_fn(span_scores[tuple(label_batch_indices)], label_span_idx, label_span_mask)
+            start_loss = self.loss_fn(start_scores[batch_indices, type_indices], start_indices, ner_start_mask)
+            end_loss = self.loss_fn(end_scores[batch_indices, type_indices], end_indices, ner_end_mask)
+            span_loss = self.loss_fn(span_scores[batch_indices, type_indices], span_indices, ner_span_mask)
             
             loss = (
                 self.config.start_loss_weight * start_loss +
@@ -564,7 +559,7 @@ class ContrastiveSpanModel(PreTrainedModel):
                 self.config.span_loss_weight * span_loss
             )
 
-            total_loss = threshold_loss * 0.5 + loss * 0.5
+            total_loss = threshold_loss + loss
 
             return SpanModelOutput(loss=total_loss, start_logits=start_scores, end_logits=end_scores, span_logits=span_scores)
         else:
