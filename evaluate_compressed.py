@@ -25,23 +25,27 @@ warnings.filterwarnings("ignore", category=FutureWarning, message=".*gamma.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
 os.environ["PYTHONWARNINGS"] = "ignore::FutureWarning"
 
-from src.model import CompressedSpanModel 
+from src.model import CompressedSpanModel, ContrastiveSpanModel 
 from src.config import SpanModelConfig
-from src.collator import AllLabelsCompressedSpanCollator
+from src.collator import AllLabelsCompressedSpanCollator, AllLabelsContrastiveDataCollator
 from src.trainer import evaluate
 from src.logger import setup_logger
-from src.args import ModelArguments, DataTrainingArguments
 
 transformers.logging.set_verbosity_error()
 
 pretrained_model_name_or_paths = [
-    "/vol/tmp/goldejon/ner/finerweb-rembert-bce-cosine/best_checkpoint",
-    "/vol/tmp/goldejon/ner/finerweb-rembert-bce-linear/best_checkpoint",
-    "/vol/tmp/goldejon/ner/finerweb-rembert-bce-pos-weight/best_checkpoint",
-    "/vol/tmp/goldejon/ner/finerweb-rembert-bce-pos-weight-2/best_checkpoint",
-    "/vol/tmp/goldejon/ner/finerweb-rembert-bce-pos-weight-3/best_checkpoint",
-    "/vol/tmp/goldejon/ner/finerweb-rembert-focal/best_checkpoint",
-    "/vol/tmp/goldejon/ner/finerweb-rembert-tokenization-aware/best_checkpoint",
+    # "/vol/tmp/goldejon/ner/finerweb-rembert-bce-cosine/best_checkpoint",
+    "/vol/tmp/goldejon/ner/finerweb-rembert-contrastive/checkpoint-55000",
+    "/vol/tmp/goldejon/ner/finerweb-rembert-contrastive-2/best_checkpoint",
+    "/vol/tmp/goldejon/ner/finerweb-rembert-contrastive-strong-span-loss/checkpoint-20000",
+    "/vol/tmp/goldejon/ner/finerweb-rembert-contrastive-strong-span-loss-no-start-end-loss/checkpoint-17500",
+    "/vol/tmp/goldejon/ner/finerweb-rembert-contrastive-strong-threshold-loss/best_checkpoint",
+    # "/vol/tmp/goldejon/ner/finerweb-rembert-bce-pos-weight/best_checkpoint",
+    # "/vol/tmp/goldejon/ner/finerweb-rembert-bce-pos-weight-2/best_checkpoint",
+    # "/vol/tmp/goldejon/ner/finerweb-rembert-bce-pos-weight-3/best_checkpoint",
+    # "/vol/tmp/goldejon/ner/finerweb-rembert-focal-3/best_checkpoint",
+    # "/vol/tmp/goldejon/ner/finerweb-rembert-focal-2/best_checkpoint",
+    # "/vol/tmp/goldejon/ner/finerweb-rembert-tokenization-aware/best_checkpoint",
 ]
 test_file = "/vol/tmp/goldejon/ner/data/thainer_no_tokens/test.jsonl"
 all_test_files_path = "/vol/tmp/goldejon/ner/eval_data/*"
@@ -99,7 +103,10 @@ def run_eval(dataset, pretrained_model_name_or_path, result_save_path):
     )
     
     config = SpanModelConfig.from_pretrained(pretrained_model_name_or_path)
-    model = CompressedSpanModel(config=config).to("cuda")
+    if config.loss_fn == "contrastive":
+        model = ContrastiveSpanModel(config=config).to("cuda")
+    else:
+        model = CompressedSpanModel(config=config).to("cuda")
     model = model.from_pretrained(pretrained_model_name_or_path)
 
     token_encoder_tokenizer = AutoTokenizer.from_pretrained(config.token_encoder)
@@ -114,14 +121,24 @@ def run_eval(dataset, pretrained_model_name_or_path, result_save_path):
         padding="longest" if len(test_labels) <= 1000 else "max_length",
         return_tensors="pt"
     )
-    test_collator = AllLabelsCompressedSpanCollator(
-        token_encoder_tokenizer, 
-        type_encodings=type_encodings,
-        label2id=label2id,
-        max_seq_length=512, 
-        format="tokens",
-        loss_masking="subwords"
-    )
+    if config.loss_fn == "contrastive":
+        test_collator = AllLabelsContrastiveDataCollator(
+            token_encoder_tokenizer, 
+            type_encodings=type_encodings,
+            label2id=label2id,
+            max_seq_length=512, 
+            format="tokens",
+            loss_masking="subwords"
+        )
+    else:
+        test_collator = AllLabelsCompressedSpanCollator(
+            token_encoder_tokenizer, 
+            type_encodings=type_encodings,
+            label2id=label2id,
+            max_seq_length=512, 
+            format="tokens",
+            loss_masking="subwords"
+        )
     test_dataloader = DataLoader(
         dataset,
         batch_size=12,

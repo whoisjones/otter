@@ -4,6 +4,8 @@ from .in_batch_compressed import InBatchCompressedSpanCollator
 from .all_labels_compressed import AllLabelsCompressedSpanCollator
 from .in_batch_contrastive import InBatchContrastiveDataCollator
 from .all_labels_contrastive import AllLabelsContrastiveDataCollator
+from .in_batch_cross_encoder import InBatchCrossEncoderCollator
+from .all_labels_cross_encoder import AllLabelsCrossEncoderCollator
 
 __all__ = [
     "InBatchDataCollator",
@@ -12,5 +14,7 @@ __all__ = [
     "AllLabelsCompressedSpanCollator",
     "InBatchContrastiveDataCollator",
     "AllLabelsContrastiveDataCollator",
+    "InBatchCrossEncoderCollator",
+    "AllLabelsCrossEncoderCollator",
 ]
 

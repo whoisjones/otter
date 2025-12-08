@@ -31,7 +31,7 @@ def evaluate(model, dataloader, accelerator):
         for batch in dataloader:
             output = model(
                 token_encoder_inputs=batch["token_encoder_inputs"],
-                type_encoder_inputs=batch["type_encoder_inputs"],
+                type_encoder_inputs=batch["type_encoder_inputs"] if "type_encoder_inputs" in batch else None,
                 labels=batch["labels"]
             )
 
@@ -43,18 +43,18 @@ def evaluate(model, dataloader, accelerator):
             golds = batch['labels']['ner']
             if len(output.span_logits.shape) == 4:
                 predictions = compute_span_predictions(
-                    span_logits=output.span_logits.detach(),
-                    start_mask=batch["labels"]["valid_start_mask"],
-                    end_mask=batch["labels"]["valid_end_mask"],
+                    span_logits=output.span_logits.cpu().numpy(),
+                    start_mask=batch["labels"]["valid_start_mask"].cpu().numpy(),
+                    end_mask=batch["labels"]["valid_end_mask"].cpu().numpy(),
                     max_span_width=unwrapped_model.config.max_span_length,
                     id2label=batch["id2label"],
                     threshold=unwrapped_model.config.prediction_threshold
                 )
             else:
                 predictions = compute_compressed_span_predictions(
-                    span_logits=output.span_logits.detach(),
-                    span_mask=batch["labels"]["valid_span_mask"],
-                    span_mapping=batch["labels"]["span_subword_indices"],
+                    span_logits=output.span_logits.cpu().numpy(),
+                    span_mask=batch["labels"]["valid_span_mask"].cpu().numpy(),
+                    span_mapping=batch["labels"]["span_subword_indices"].cpu().numpy(),
                     id2label=batch["id2label"],
                     threshold=unwrapped_model.config.prediction_threshold
                 )
@@ -107,7 +107,7 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
         
         output = model(
             token_encoder_inputs=batch["token_encoder_inputs"],
-            type_encoder_inputs=batch["type_encoder_inputs"],
+            type_encoder_inputs=batch["type_encoder_inputs"] if "type_encoder_inputs" in batch else None,
             labels=batch["labels"]
         )
         loss = output.loss
