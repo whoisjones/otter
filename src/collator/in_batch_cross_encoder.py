@@ -1,3 +1,4 @@
+import random
 import torch
 from .masks import compressed_all_spans_mask_cross_encoder, compressed_subwords_mask_cross_encoder
 
@@ -24,14 +25,14 @@ class InBatchCrossEncoderCollator:
             for span in sample["token_spans" if self.format == 'tokens' else "char_spans"]:
                 if span["label"] not in unique_types:
                     unique_types.append(span["label"])
-        unique_types = sorted(unique_types)
+        random.shuffle(unique_types)
         type2id_batch = {entity_type: idx for idx, entity_type in enumerate(unique_types)}
 
         if not unique_types:
             return {}
 
-        label_text = "[LABEL] " + " [LABEL] ".join(unique_types) + " [SEP] "
-        label_char_offset = len(label_text) - 1
+        label_text = "[LABEL] " + " [LABEL] ".join(unique_types) + " [SEP]"
+        label_char_offset = len(label_text)
         input_texts = [label_text + text for text in texts]
         
         token_encodings = self.token_encoder_tokenizer(
@@ -43,7 +44,7 @@ class InBatchCrossEncoderCollator:
             return_offsets_mapping=True if self.format == 'text' else False,
             is_split_into_words=True if self.format == 'tokens' else False
         )
-        
+
         offset_mapping = token_encodings.pop("offset_mapping")
         label_token_subword_positions = [i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.token_encoder_tokenizer.convert_tokens_to_ids("[LABEL]")]
 

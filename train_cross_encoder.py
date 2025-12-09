@@ -108,6 +108,7 @@ def main():
         tokenizer = AutoTokenizer.from_pretrained(config.token_encoder)
         tokenizer.add_tokens(["[LABEL]"], special_tokens=True)
         model = CrossEncoderModel(config=config)
+        model.token_encoder.resize_token_embeddings(len(tokenizer.vocab) + 1)
 
     in_batch_collator = InBatchCrossEncoderCollator(
         tokenizer, 

@@ -5,8 +5,8 @@ class AllLabelsCrossEncoderCollator:
     def __init__(self, tokenizer, label2id, max_seq_length=512, max_span_length=30, format='text', loss_masking='none'):
         self.tokenizer = tokenizer
         self.label2id = label2id
-        self.label_text = "[LABEL] " + " [LABEL] ".join(label2id.keys()) + " [SEP] "
-        self.label_offset = len(self.label_text) - 1
+        self.label_text = "[LABEL] " + " [LABEL] ".join(label2id.keys()) + " [SEP]"
+        self.label_offset = len(self.label_text)
         self.max_seq_length = max_seq_length
         self.max_span_length = max_span_length
         self.format = format

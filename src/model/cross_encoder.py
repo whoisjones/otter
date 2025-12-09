@@ -35,7 +35,6 @@ class CrossEncoderModel(PreTrainedModel):
             self.token_encoder = MT5EncoderModel.from_pretrained(config.token_encoder, config=token_config)
         else:
             self.token_encoder = AutoModel.from_pretrained(config.token_encoder, config=token_config)
-        self.token_encoder.resize_token_embeddings(len(self.token_encoder.vocab) + 1)
 
         if config.loss_fn == "focal":
             self.loss_fn = FocalLoss(alpha=config.focal_alpha, gamma=config.focal_gamma)
@@ -74,19 +73,17 @@ class CrossEncoderModel(PreTrainedModel):
         **kwargs
     ):
         encoder_outputs = self.token_encoder(**token_encoder_inputs).last_hidden_state
-        token_output = encoder_outputs[:, labels["text_start_index"]:, :]
-        type_output = encoder_outputs[:, labels["label_token_subword_positions"], :]
+        token_hidden = encoder_outputs[:, labels["text_start_index"]:, :]
+        type_hidden = encoder_outputs[:, labels["label_token_subword_positions"], :]
 
-        token_start_output = F.normalize(self.dropout(self.token_start_linear(token_output)), dim=-1)
-        token_end_output = F.normalize(self.dropout(self.token_end_linear(token_output)), dim=-1)
-
-        type_output = F.normalize(self.dropout(self.type_linear(type_output)), dim=-1)
+        token_start_output = F.normalize(self.dropout(self.token_start_linear(token_hidden)), dim=-1)
+        token_end_output = F.normalize(self.dropout(self.token_end_linear(token_hidden)), dim=-1)
+        type_output = F.normalize(self.dropout(self.type_linear(type_hidden)), dim=-1)
 
         start_scores = self.start_logit_scale.exp() * torch.einsum("BSH,BCH->BCS", token_start_output, type_output)
         end_scores = self.end_logit_scale.exp() * torch.einsum("BSH,BCH->BCS", token_end_output, type_output)
         
         span_width_embeddings = self.width_embedding(labels["span_lengths"])
-
         span_hidden = torch.cat(
             [
                 self.gather_spans(token_start_output, labels["span_subword_indices"][:, :, 0]),
