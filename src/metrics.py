@@ -8,7 +8,7 @@ def compute_span_predictions(span_logits, start_mask, end_mask, max_span_width, 
 
     span_probs = sigmoid(span_logits)
     span_preds = np.triu(span_probs > threshold)
-    batch_ids, type_ids, start_indexes, end_indexes = np.nonzero(start_mask.unsqueeze(-1) & end_mask.unsqueeze(-2) & span_preds)
+    batch_ids, type_ids, start_indexes, end_indexes = np.nonzero(start_mask[..., None] & end_mask[..., None] & span_preds)
 
     span_widths = end_indexes - start_indexes + 1
     valid_mask = span_widths <= max_span_width

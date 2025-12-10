@@ -46,6 +46,11 @@ class FocalLoss(nn.Module):
 
 
 class ContrastiveLoss(nn.Module):
+
+    def __init__(self, tau: float = 1.0):
+        super().__init__()
+        self.tau = tau
+
     def forward(
         self, 
         scores: torch.tensor, 
@@ -54,7 +59,7 @@ class ContrastiveLoss(nn.Module):
         prob_mask: torch.tensor = None
     ) -> torch.tensor:
         batch_size, seq_length = scores.size(0), scores.size(1)
-        scores = scores / 2.0
+        scores = scores / self.tau
         if len(scores.shape) == 3:
             scores = scores.view(batch_size, -1)
             mask = mask.view(batch_size, -1)
@@ -115,7 +120,7 @@ class TokenizationAwareLoss(nn.Module):
         return loss
 
 
-class JGMakerLoss(nn.Module):
+class TrueNegativeAvoidanceLoss(nn.Module):
     def __init__(self, total_steps: int, k: float = 0.01, threshold: float = 0.5):
         super().__init__()
         self.total_steps = int(total_steps)
