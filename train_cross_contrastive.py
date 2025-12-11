@@ -87,6 +87,7 @@ def main():
         except Exception:
             tokenizer = AutoTokenizer.from_pretrained(config.token_encoder)
             tokenizer.add_tokens(["[LABEL]"], special_tokens=True)
+            tokenizer.add_tokens(["[SPAN_THRESHOLD]"], special_tokens=True)
     else:
         # Validate that token_encoder and type_encoder are provided
         if model_args.token_encoder is None or model_args.type_encoder is None:
@@ -116,10 +117,11 @@ def main():
             type_encoder_pooling=model_args.type_encoder_pooling,
             prediction_threshold=model_args.prediction_threshold
         )
+        model = ContrastiveCrossEncoderModel(config=config)
         tokenizer = AutoTokenizer.from_pretrained(config.token_encoder)
         tokenizer.add_tokens(["[LABEL]"], special_tokens=True)
-        model = ContrastiveCrossEncoderModel(config=config)
-        model.token_encoder.resize_token_embeddings(len(tokenizer.vocab) + 1)
+        tokenizer.add_tokens(["[SPAN_THRESHOLD]"], special_tokens=True)
+        model.token_encoder.resize_token_embeddings(len(tokenizer.vocab) + 2)
 
     train_collator = TrainCollatorContrastiveCrossEncoder(
         tokenizer, 

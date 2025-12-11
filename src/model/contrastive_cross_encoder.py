@@ -26,7 +26,7 @@ class ContrastiveCrossEncoderModel(PreTrainedModel):
         self.token_start_linear = mlp(token_config.hidden_size, config.linear_hidden_size, config.dropout)
         self.token_end_linear = mlp(token_config.hidden_size, config.linear_hidden_size, config.dropout)
         self.token_span_linear = mlp(config.linear_hidden_size * 2 + config.span_width_embedding_size, config.linear_hidden_size, config.dropout)
-        self.width_embedding = nn.Embedding(config.max_span_length + 1, config.span_width_embedding_size, padding_idx=0)
+        self.width_embedding = nn.Embedding(config.max_span_length + 2, config.span_width_embedding_size, padding_idx=0)
         self.start_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
         self.end_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
         self.span_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
@@ -67,7 +67,13 @@ class ContrastiveCrossEncoderModel(PreTrainedModel):
         **kwargs
     ):
         encoder_outputs = self.token_encoder(**token_encoder_inputs).last_hidden_state
-        token_hidden = encoder_outputs[:, labels["text_start_index"]:, :]
+        token_hidden = torch.cat(
+            [
+                encoder_outputs[:, labels["threshold_token_subword_position"], :],
+                encoder_outputs[:, labels["text_start_index"]:, :]
+            ],
+            dim=1
+        )
         type_hidden = encoder_outputs[:, labels["label_token_subword_positions"], :]
 
         B, S, H = token_hidden.size()
@@ -125,7 +131,7 @@ class ContrastiveCrossEncoderModel(PreTrainedModel):
             )
 
             total_loss = self.config.contrastive_threshold_loss_weight * threshold_loss + self.config.contrastive_span_loss_weight * loss
-            return SpanModelOutput(loss=loss, start_logits=start_scores, end_logits=end_scores, span_logits=span_scores)
+            return SpanModelOutput(loss=total_loss, start_logits=start_scores, end_logits=end_scores, span_logits=span_scores)
         else:
             return SpanModelOutput(start_logits=start_scores, end_logits=end_scores, span_logits=span_scores)
     

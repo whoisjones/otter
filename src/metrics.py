@@ -41,7 +41,7 @@ def compute_compressed_span_predictions(span_logits, span_mask, span_mapping, id
     B, C, S = span_logits.shape
 
     span_probs = sigmoid(span_logits)
-    if threshold == "cls":
+    if threshold == "cls" or threshold == "label_token":
         span_preds = span_probs > span_probs[:, :, 0:1]
     else:
         span_preds = span_probs > threshold

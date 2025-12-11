@@ -10,10 +10,10 @@ class EvalCollatorContrastiveCrossEncoder:
         self.format = format
         self.loss_masking = loss_masking
         if self.format == 'text':
-            self.label_prefix = "[LABEL] " + " [LABEL] ".join(self.label2id.keys()) + " [SEP]"
+            self.label_prefix = "[SPAN_THRESHOLD] [LABEL] " + " [LABEL] ".join(self.label2id.keys()) + " [SEP]"
             self.label_offset = len(self.label_prefix)
         elif self.format == 'tokens':
-            self.label_prefix = [tok for label in self.label2id.keys() for tok in ('[LABEL]', label)] + ['[SEP]']
+            self.label_prefix = ['[SPAN_THRESHOLD]'] + [tok for label in self.label2id.keys() for tok in ('[LABEL]', label)] + ['[SEP]']
             self.label_offset = len(self.label_prefix)
         if loss_masking not in ['none', 'subwords']:
             raise ValueError(f"Invalid loss masking: {loss_masking}")
@@ -41,6 +41,7 @@ class EvalCollatorContrastiveCrossEncoder:
         if self.format == 'text':
             offset_mapping = token_encodings.pop("offset_mapping")
 
+        threshold_token_subword_position = [next(i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.tokenizer.convert_tokens_to_ids("[SPAN_THRESHOLD]"))]
         label_token_subword_positions = [i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.tokenizer.convert_tokens_to_ids("[LABEL]")]
 
         annotations = {
@@ -88,8 +89,8 @@ class EvalCollatorContrastiveCrossEncoder:
                             continue
 
                         annotation.append({
-                            "start": start_label_index - text_start_index,
-                            "end": end_label_index - text_start_index,
+                            "start": (start_label_index - text_start_index) + 1,
+                            "end": (end_label_index - text_start_index) + 1,
                             "label": label["label"]
                         })
 
@@ -110,8 +111,8 @@ class EvalCollatorContrastiveCrossEncoder:
                             continue
 
                         annotation.append({
-                            "start": start_label_index - text_start_index,
-                            "end": end_label_index - text_start_index,
+                            "start": (start_label_index - text_start_index) + 1,
+                            "end": (end_label_index - text_start_index) + 1,
                             "label": label["label"]
                         })
 
@@ -124,6 +125,7 @@ class EvalCollatorContrastiveCrossEncoder:
         annotations["span_lengths"] = torch.stack(annotations["span_lengths"], dim=0)
         annotations["valid_span_mask"] = torch.stack(annotations["valid_span_mask"], dim=0)
         annotations["label_token_subword_positions"] = label_token_subword_positions
+        annotations["threshold_token_subword_position"] = threshold_token_subword_position
         annotations["text_start_index"] = text_start_index
 
         token_encoder_inputs = {

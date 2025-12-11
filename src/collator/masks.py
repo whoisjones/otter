@@ -153,6 +153,8 @@ def compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, max_span_le
         text_end_index -= 1
 
     start_mask, end_mask = [], []
+    start_mask.append(0)
+    end_mask.append(0)
     for sequence_id in sequence_ids[text_start_index:]:
         start_mask.append(1 if sequence_id is not None else 0)
         end_mask.append(1 if sequence_id is not None else 0)
@@ -160,7 +162,7 @@ def compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, max_span_le
     spans_idx = [
         (i, i + j)
         for i in range(num_tokens - text_start_index)
-        for j in range(max_span_length)
+        for j in range(max_span_length + 1)
         if i + j < num_tokens - text_start_index
     ]
     span_lengths = [end_subword_index - start_subword_index + 1 for start_subword_index, end_subword_index in spans_idx]
@@ -195,6 +197,8 @@ def compressed_subwords_mask_cross_encoder(input_ids, word_ids, max_span_length,
         
     start_mask = []
     end_mask = []
+    start_mask.append(0)
+    end_mask.append(0)
     previous_word_id = None
 
     for idx, word_id in enumerate(word_ids[text_start_index:]):
@@ -216,7 +220,7 @@ def compressed_subwords_mask_cross_encoder(input_ids, word_ids, max_span_length,
     spans_idx = [
         (i, i + j)
         for i in range(num_tokens - text_start_index)
-        for j in range(max_span_length)
+        for j in range(max_span_length + 1)
         if i + j < num_tokens - text_start_index
     ]
     span_lengths = [end_subword_index - start_subword_index + 1 for start_subword_index, end_subword_index in spans_idx]

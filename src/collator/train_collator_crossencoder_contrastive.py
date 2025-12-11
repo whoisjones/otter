@@ -32,11 +32,11 @@ class TrainCollatorContrastiveCrossEncoder:
             return {}
 
         if self.format == 'text':
-            label_text = "[LABEL] " + " [LABEL] ".join(unique_types) + " [SEP]"
+            label_text = "[SPAN_THRESHOLD] [LABEL] " + " [LABEL] ".join(unique_types) + " [SEP]"
             label_offset = len(label_text)
             input_texts = [label_text + text for text in texts]
         elif self.format == 'tokens':
-            label_list = [tok for label in unique_types for tok in ('[LABEL]', label)] + ['[SEP]']
+            label_list = ['[SPAN_THRESHOLD]'] + [tok for label in unique_types for tok in ('[LABEL]', label)] + ['[SEP]']
             label_offset = len(label_list)
             input_texts = [label_list + text for text in texts]
         
@@ -53,6 +53,7 @@ class TrainCollatorContrastiveCrossEncoder:
         if self.format == 'text':
             offset_mapping = token_encodings.pop("offset_mapping")
 
+        threshold_token_subword_position = [next(i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.token_encoder_tokenizer.convert_tokens_to_ids("[SPAN_THRESHOLD]"))]
         label_token_subword_positions = [i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.token_encoder_tokenizer.convert_tokens_to_ids("[LABEL]")]
 
         annotations = {
@@ -108,8 +109,11 @@ class TrainCollatorContrastiveCrossEncoder:
                         if start_label_index > end_label_index:
                             continue
 
-                        start_negative_mask[type2id_batch[label["label"]], start_label_index - text_start_index] = 0
-                        end_negative_mask[type2id_batch[label["label"]], end_label_index - text_start_index] = 0
+                        start_label_index += 1
+                        end_label_index += 1
+
+                        start_negative_mask[type2id_batch[label["label"]], (start_label_index - text_start_index)] = 0
+                        end_negative_mask[type2id_batch[label["label"]], (end_label_index - text_start_index)] = 0
                         span_negative_mask[type2id_batch[label["label"]], span_lookup[(start_label_index - text_start_index, end_label_index - text_start_index)]] = 0
 
                         annotations["ner_indices"][0].append(i)
@@ -134,8 +138,11 @@ class TrainCollatorContrastiveCrossEncoder:
                         if start_label_index > end_label_index:
                             continue
 
-                        start_negative_mask[type2id_batch[label["label"]], start_label_index - text_start_index] = 0
-                        end_negative_mask[type2id_batch[label["label"]], end_label_index - text_start_index] = 0
+                        start_label_index += 1
+                        end_label_index += 1
+
+                        start_negative_mask[type2id_batch[label["label"]], (start_label_index - text_start_index)] = 0
+                        end_negative_mask[type2id_batch[label["label"]], (end_label_index - text_start_index)] = 0
                         span_negative_mask[type2id_batch[label["label"]], span_lookup[(start_label_index - text_start_index, end_label_index - text_start_index)]] = 0
                         
                         annotations["ner_indices"][0].append(i)
@@ -156,6 +163,7 @@ class TrainCollatorContrastiveCrossEncoder:
         annotations["span_subword_indices"] = torch.stack(annotations["span_subword_indices"], dim=0)
         annotations["span_lengths"] = torch.stack(annotations["span_lengths"], dim=0)
         annotations["label_token_subword_positions"] = label_token_subword_positions
+        annotations["threshold_token_subword_position"] = threshold_token_subword_position
         annotations["text_start_index"] = text_start_index
 
         for i in range(len(annotations["ner_indices"][0])):
