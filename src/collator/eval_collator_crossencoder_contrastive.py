@@ -1,20 +1,38 @@
 import torch
+import logging
 from .masks import compressed_all_spans_mask_cross_encoder, compressed_subwords_mask_cross_encoder
 
+logger = logging.getLogger(__name__)
+
 class EvalCollatorContrastiveCrossEncoder:
-    def __init__(self, tokenizer, label2id, max_seq_length=512, max_span_length=30, format='text', loss_masking='none'):
+    def __init__(self, tokenizer, label2id, max_seq_length=512, max_span_length=30, format='text', loss_masking='none', prediction_threshold='label_token'):
         self.tokenizer = tokenizer
         self.label2id = label2id
         self.max_seq_length = max_seq_length
         self.max_span_length = max_span_length
         self.format = format
         self.loss_masking = loss_masking
+        
+        if prediction_threshold not in ['label_token', 'cls']:
+            raise ValueError(f"Invalid threshold token: {prediction_threshold}")
+        if prediction_threshold == 'cls' and not self.tokenizer.cls_token == '[CLS]':
+            logger.warning(f"CLS token not found in tokenizer. Using [SPAN_THRESHOLD] instead.")
+            prediction_threshold = 'label_token'
+        self.prediction_threshold = prediction_threshold
+        self.threshold_token = '[SPAN_THRESHOLD]' if prediction_threshold == 'label_token' else '[CLS]'
+        
         if self.format == 'text':
-            self.label_prefix = "[SPAN_THRESHOLD] [LABEL] " + " [LABEL] ".join(self.label2id.keys()) + " [SEP]"
-            self.label_offset = len(self.label_prefix)
+            label_prefix = "[LABEL] " + " [LABEL] ".join(self.label2id.keys()) + " [SEP]"
+            if self.prediction_threshold == "label_token":
+                label_prefix = self.threshold_token + " " + label_prefix
+            self.label_offset = len(label_prefix)
+            self.label_prefix = label_prefix
         elif self.format == 'tokens':
-            self.label_prefix = ['[SPAN_THRESHOLD]'] + [tok for label in self.label2id.keys() for tok in ('[LABEL]', label)] + ['[SEP]']
-            self.label_offset = len(self.label_prefix)
+            label_list = [tok for label in self.label2id.keys() for tok in ('[LABEL]', label)] + ['[SEP]']
+            if self.prediction_threshold == "label_token":
+                label_list = [self.threshold_token] + label_list
+            self.label_offset = len(label_list)
+            self.label_prefix = label_list
         if loss_masking not in ['none', 'subwords']:
             raise ValueError(f"Invalid loss masking: {loss_masking}")
 
@@ -41,7 +59,7 @@ class EvalCollatorContrastiveCrossEncoder:
         if self.format == 'text':
             offset_mapping = token_encodings.pop("offset_mapping")
 
-        threshold_token_subword_position = [next(i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.tokenizer.convert_tokens_to_ids("[SPAN_THRESHOLD]"))]
+        threshold_token_subword_position = [next(i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.tokenizer.convert_tokens_to_ids(self.threshold_token))]
         label_token_subword_positions = [i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.tokenizer.convert_tokens_to_ids("[LABEL]")]
 
         annotations = {
@@ -87,10 +105,13 @@ class EvalCollatorContrastiveCrossEncoder:
 
                         if start_label_index > end_label_index:
                             continue
+                        
+                        start_label_index += 1
+                        end_label_index += 1
 
                         annotation.append({
-                            "start": (start_label_index - text_start_index) + 1,
-                            "end": (end_label_index - text_start_index) + 1,
+                            "start": start_label_index - text_start_index,
+                            "end": end_label_index - text_start_index,
                             "label": label["label"]
                         })
 
@@ -110,9 +131,12 @@ class EvalCollatorContrastiveCrossEncoder:
                         if start_label_index > end_label_index:
                             continue
 
+                        start_label_index += 1
+                        end_label_index += 1
+
                         annotation.append({
-                            "start": (start_label_index - text_start_index) + 1,
-                            "end": (end_label_index - text_start_index) + 1,
+                            "start": start_label_index - text_start_index,
+                            "end": end_label_index - text_start_index,
                             "label": label["label"]
                         })
 

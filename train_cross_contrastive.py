@@ -65,10 +65,6 @@ def main():
         data_files["test"] = data_args.test_file
     dataset = load_dataset('json', data_files=data_files)
 
-    if model_args.prediction_threshold != "label_token":
-        logger.warning(f"Unsupported prediction threshold: {model_args.prediction_threshold}. Setting prediction threshold to 'label_token'.")
-        model_args.prediction_threshold = "label_token"
-
     # Load model from checkpoint if provided, otherwise initialize from scratch
     if model_args.model_checkpoint is not None:
         if accelerator.is_main_process:
@@ -127,7 +123,8 @@ def main():
         tokenizer, 
         max_seq_length=data_args.max_seq_length, 
         format=data_args.annotation_format,
-        loss_masking=data_args.loss_masking
+        loss_masking=data_args.loss_masking,
+        prediction_threshold=model_args.prediction_threshold
     )
 
     if training_args.do_train:
@@ -151,7 +148,8 @@ def main():
             label2id=label2id,
             max_seq_length=data_args.max_seq_length, 
             format=data_args.annotation_format,
-            loss_masking=data_args.loss_masking
+            loss_masking=data_args.loss_masking,
+            prediction_threshold=model_args.prediction_threshold
         )
         eval_dataloader = DataLoader(
             dataset["validation"],
@@ -171,7 +169,8 @@ def main():
             label2id=label2id,
             max_seq_length=data_args.max_seq_length, 
             format=data_args.annotation_format,
-            loss_masking=data_args.loss_masking
+            loss_masking=data_args.loss_masking,
+            prediction_threshold=model_args.prediction_threshold
         )
         test_dataloader = DataLoader(
             dataset["test"],

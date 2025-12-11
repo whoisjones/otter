@@ -1,14 +1,24 @@
 import random
 import torch
+import logging
 from .masks import compressed_all_spans_mask_cross_encoder, compressed_subwords_mask_cross_encoder
 
+logger = logging.getLogger(__name__)
+
 class TrainCollatorContrastiveCrossEncoder:
-    def __init__(self, token_encoder_tokenizer, max_seq_length=512, max_span_length=30, format='text', loss_masking='none'):
+    def __init__(self, token_encoder_tokenizer, max_seq_length=512, max_span_length=30, format='text', loss_masking='none', prediction_threshold='label_token'):
         self.token_encoder_tokenizer = token_encoder_tokenizer
         self.max_seq_length = max_seq_length
         self.max_span_length = max_span_length
         self.format = format
         self.loss_masking = loss_masking
+        if prediction_threshold not in ['label_token', 'cls']:
+            raise ValueError(f"Invalid threshold token: {prediction_threshold}")
+        if prediction_threshold == 'cls' and not self.token_encoder_tokenizer.cls_token == '[CLS]':
+            logger.warning(f"CLS token not found in tokenizer. Using [SPAN_THRESHOLD] instead.")
+            prediction_threshold = 'label_token'
+        self.prediction_threshold = prediction_threshold
+        self.threshold_token = '[SPAN_THRESHOLD]' if prediction_threshold == 'label_token' else '[CLS]'
         if loss_masking not in ['none', 'subwords']:
             raise ValueError(f"Invalid loss masking: {loss_masking}")
 
@@ -32,11 +42,15 @@ class TrainCollatorContrastiveCrossEncoder:
             return {}
 
         if self.format == 'text':
-            label_text = "[SPAN_THRESHOLD] [LABEL] " + " [LABEL] ".join(unique_types) + " [SEP]"
+            label_text = "[LABEL] " + " [LABEL] ".join(unique_types) + " [SEP]"
+            if self.prediction_threshold == "label_token":
+                label_text = self.threshold_token + " " + label_text
             label_offset = len(label_text)
             input_texts = [label_text + text for text in texts]
         elif self.format == 'tokens':
-            label_list = ['[SPAN_THRESHOLD]'] + [tok for label in unique_types for tok in ('[LABEL]', label)] + ['[SEP]']
+            label_list = [tok for label in unique_types for tok in ('[LABEL]', label)] + ['[SEP]']
+            if self.prediction_threshold == "label_token":
+                label_list = [self.threshold_token] + label_list
             label_offset = len(label_list)
             input_texts = [label_list + text for text in texts]
         
@@ -53,7 +67,7 @@ class TrainCollatorContrastiveCrossEncoder:
         if self.format == 'text':
             offset_mapping = token_encodings.pop("offset_mapping")
 
-        threshold_token_subword_position = [next(i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.token_encoder_tokenizer.convert_tokens_to_ids("[SPAN_THRESHOLD]"))]
+        threshold_token_subword_position = [next(i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.token_encoder_tokenizer.convert_tokens_to_ids(self.threshold_token))]
         label_token_subword_positions = [i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.token_encoder_tokenizer.convert_tokens_to_ids("[LABEL]")]
 
         annotations = {
@@ -74,11 +88,11 @@ class TrainCollatorContrastiveCrossEncoder:
 
             if self.loss_masking == 'subwords':
                 word_ids = token_encodings.word_ids(i)
-                text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_subwords_mask_cross_encoder(input_ids, word_ids, self.max_span_length, label_offset)
+                text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_subwords_mask_cross_encoder(input_ids, word_ids, self.max_span_length, label_offset, self.prediction_threshold)
             else:
                 sequence_ids = token_encodings.sequence_ids(i)
                 offsets = offset_mapping[i]
-                text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, self.max_span_length, label_offset, offsets)
+                text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, self.max_span_length, label_offset, offsets, self.prediction_threshold)
 
             span_lookup = {span: idx for idx, span in enumerate(spans_idx)}
             span_subword_indices = torch.tensor(spans_idx)
@@ -147,9 +161,9 @@ class TrainCollatorContrastiveCrossEncoder:
                         
                         annotations["ner_indices"][0].append(i)
                         annotations["ner_indices"][1].append(type2id_batch[label["label"]])
-                        annotations["ner_indices"][2].append(start_label_index)
-                        annotations["ner_indices"][3].append(end_label_index)
-                        annotations["ner_indices"][4].append(span_lookup[(start_label_index, end_label_index)])
+                        annotations["ner_indices"][2].append(start_label_index - text_start_index)
+                        annotations["ner_indices"][3].append(end_label_index - text_start_index)
+                        annotations["ner_indices"][4].append(span_lookup[(start_label_index - text_start_index, end_label_index - text_start_index)])
 
             annotations["start_negative_mask"].append(start_negative_mask)
             annotations["end_negative_mask"].append(end_negative_mask)
