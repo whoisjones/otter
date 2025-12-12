@@ -141,7 +141,7 @@ def compressed_subwords_mask(input_ids, word_ids, max_span_length):
 
     return text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths
 
-def compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, max_span_length, label_offset, offsets, prediction_threshold='label_token'):
+def compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, max_span_length, label_offset, offsets, has_threshold_token=False):
     num_tokens = len(input_ids)
 
     text_start_index = 0
@@ -153,9 +153,10 @@ def compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, max_span_le
         text_end_index -= 1
 
     start_mask, end_mask = [], []
-    start_mask.append(0)
-    end_mask.append(0)
-    max_span_length += 1
+    if has_threshold_token:
+        start_mask.append(0)
+        end_mask.append(0)
+        max_span_length += 1
 
     for sequence_id in sequence_ids[text_start_index:]:
         start_mask.append(1 if sequence_id is not None else 0)
@@ -183,7 +184,7 @@ def compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, max_span_le
 
     return text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths
 
-def compressed_subwords_mask_cross_encoder(input_ids, word_ids, max_span_length, label_offset, prediction_threshold='label_token'):
+def compressed_subwords_mask_cross_encoder(input_ids, word_ids, max_span_length, label_offset, has_threshold_token=False):
     num_tokens = len(input_ids)
     text_start_index = 0
     while text_start_index < num_tokens:
@@ -199,9 +200,10 @@ def compressed_subwords_mask_cross_encoder(input_ids, word_ids, max_span_length,
         
     start_mask = []
     end_mask = []
-    start_mask.append(0)
-    end_mask.append(0)
-    max_span_length += 1
+    if has_threshold_token:
+        start_mask.append(0)
+        end_mask.append(0)
+        max_span_length += 1
 
     previous_word_id = None
 

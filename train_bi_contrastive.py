@@ -263,6 +263,9 @@ def main():
                 }, f, indent=2)
             logger.info(f"\nTest results saved to {test_results_path}")
 
+    if accelerator.num_processes > 1:
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
 
 if __name__ == "__main__":
     main()

@@ -41,7 +41,7 @@ def main():
     
     torch.manual_seed(training_args.seed)
     
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    ddp_kwargs = DistributedDataParallelKwargs()
     
     accelerator = Accelerator(
         mixed_precision="bf16" if getattr(training_args, 'bf16', False) else "no",
@@ -254,6 +254,9 @@ def main():
                 }, f, indent=2)
             logger.info(f"\nTest results saved to {test_results_path}")
 
+    if accelerator.num_processes > 1:
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
 
 if __name__ == "__main__":
     main()

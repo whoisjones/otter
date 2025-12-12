@@ -25,27 +25,16 @@ warnings.filterwarnings("ignore", category=FutureWarning, message=".*gamma.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
 os.environ["PYTHONWARNINGS"] = "ignore::FutureWarning"
 
-from src.model import CompressedSpanModel, ContrastiveSpanModel 
+from src.model import CompressedBiEncoderModel, ContrastiveBiEncoderModel 
 from src.config import SpanModelConfig
-from src.collator import AllLabelsCompressedSpanCollator, AllLabelsContrastiveDataCollator
+from src.collator import EvalCollatorCompressedBiEncoder, EvalCollatorContrastiveBiEncoder
 from src.trainer import evaluate
 from src.logger import setup_logger
 
 transformers.logging.set_verbosity_error()
 
 pretrained_model_name_or_paths = [
-    # "/vol/tmp/goldejon/ner/finerweb-rembert-bce-cosine/best_checkpoint",
-    "/vol/tmp/goldejon/ner/finerweb-rembert-contrastive/checkpoint-55000",
-    "/vol/tmp/goldejon/ner/finerweb-rembert-contrastive-2/best_checkpoint",
-    "/vol/tmp/goldejon/ner/finerweb-rembert-contrastive-strong-span-loss/checkpoint-20000",
-    "/vol/tmp/goldejon/ner/finerweb-rembert-contrastive-strong-span-loss-no-start-end-loss/checkpoint-17500",
-    "/vol/tmp/goldejon/ner/finerweb-rembert-contrastive-strong-threshold-loss/best_checkpoint",
-    # "/vol/tmp/goldejon/ner/finerweb-rembert-bce-pos-weight/best_checkpoint",
-    # "/vol/tmp/goldejon/ner/finerweb-rembert-bce-pos-weight-2/best_checkpoint",
-    # "/vol/tmp/goldejon/ner/finerweb-rembert-bce-pos-weight-3/best_checkpoint",
-    # "/vol/tmp/goldejon/ner/finerweb-rembert-focal-3/best_checkpoint",
-    # "/vol/tmp/goldejon/ner/finerweb-rembert-focal-2/best_checkpoint",
-    # "/vol/tmp/goldejon/ner/finerweb-rembert-tokenization-aware/best_checkpoint",
+    "/vol/tmp/goldejon/ner/finerweb-rembert-bce-linear/best_checkpoint",
 ]
 test_file = "/vol/tmp/goldejon/ner/data/thainer_no_tokens/test.jsonl"
 all_test_files_path = "/vol/tmp/goldejon/ner/eval_data/*"
@@ -85,6 +74,9 @@ def run_complete_eval():
                     test_split = test_split.shuffle(seed=42)
                 else:
                     test_split = test_split.shuffle(seed=42).select(range(max_samples))
+                if os.path.exists(f"results/{model_name}/{language_dataset.split("/")[-2]}"):
+                    continue
+
                 os.makedirs(f"results/{model_name}/{language_dataset.split("/")[-2]}", exist_ok=True)
                 result_save_path = f"results/{model_name}/{language_dataset.split("/")[-2]}/{language_dataset.split("/")[-1]}.json"
                 run_eval(test_split, pretrained_model_name_or_path, result_save_path)
@@ -104,9 +96,9 @@ def run_eval(dataset, pretrained_model_name_or_path, result_save_path):
     
     config = SpanModelConfig.from_pretrained(pretrained_model_name_or_path)
     if config.loss_fn == "contrastive":
-        model = ContrastiveSpanModel(config=config).to("cuda")
+        model = ContrastiveBiEncoderModel(config=config).to("cuda")
     else:
-        model = CompressedSpanModel(config=config).to("cuda")
+        model = CompressedBiEncoderModel(config=config).to("cuda")
     model = model.from_pretrained(pretrained_model_name_or_path)
 
     token_encoder_tokenizer = AutoTokenizer.from_pretrained(config.token_encoder)
@@ -122,7 +114,7 @@ def run_eval(dataset, pretrained_model_name_or_path, result_save_path):
         return_tensors="pt"
     )
     if config.loss_fn == "contrastive":
-        test_collator = AllLabelsContrastiveDataCollator(
+        test_collator = EvalCollatorContrastiveBiEncoder(
             token_encoder_tokenizer, 
             type_encodings=type_encodings,
             label2id=label2id,
@@ -131,7 +123,7 @@ def run_eval(dataset, pretrained_model_name_or_path, result_save_path):
             loss_masking="subwords"
         )
     else:
-        test_collator = AllLabelsCompressedSpanCollator(
+        test_collator = EvalCollatorCompressedBiEncoder(
             token_encoder_tokenizer, 
             type_encodings=type_encodings,
             label2id=label2id,
