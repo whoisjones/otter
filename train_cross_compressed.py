@@ -37,7 +37,13 @@ transformers.logging.set_verbosity_error()
 def main():
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, CustomTrainingArguments))
     model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[-1]))
-    os.makedirs(training_args.output_dir, exist_ok=True)
+    output_dir = training_args.output_dir
+    os.makedirs(output_dir, exist_ok=True)
+
+    best_ckpt = Path(output_dir) / "best_checkpoint"
+    if best_ckpt.exists():
+        print(f"Best checkpoint already exists at {best_ckpt}. Exiting script.")
+        sys.exit(0)
     
     torch.manual_seed(training_args.seed)
     

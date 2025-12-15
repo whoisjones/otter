@@ -111,21 +111,20 @@ if __name__ == "__main__":
                 remapped.append({
                     "start": span_start - char_start,
                     "end": span_end - char_start,
-                    "label": span["label"],
+                    "label": span["tag"],
                 })
             elif span_start < char_end and span_end > char_start:
                 # Span crosses sentence boundary, drop it
                 dropped += 1
         return remapped, dropped
     
-    for file in glob.glob("/vol/tmp/goldejon/ner/data/finerweb_singlelabel/*.jsonl"):
+    for file in glob.glob("/vol/tmp2/goldejon/multilingual_ner/data/singlelabel/finerweb_merged_jsonl_translated/*.jsonl"):
         language = file.split("/")[-1].split(".")[0]
         language_code = iso639.Language.from_part3(language).part1
         # Determine output path in finerweb_splitted directory
-        input_path = Path(file)
-        output_dir = input_path.parent.parent / "finerweb_splitted"
+        output_dir = Path('/vol/tmp/goldejon/ner/data/finerweb_translated_splitted')
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / input_path.name
+        output_path = output_dir / file.split("/")[-1]
         if output_path.exists():
             continue
         
