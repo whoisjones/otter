@@ -118,7 +118,7 @@ if __name__ == "__main__":
                 dropped += 1
         return remapped, dropped
     
-    for file in glob.glob("/vol/tmp2/goldejon/multilingual_ner/data/singlelabel/finerweb_merged_jsonl_translated/*.jsonl"):
+    for file in glob.glob("/vol/tmp/goldejon/multilingual_ner/data/training_jsonl/finerweb_translated/*.jsonl"):
         language = file.split("/")[-1].split(".")[0]
         language_code = iso639.Language.from_part3(language).part1
         # Determine output path in finerweb_splitted directory
@@ -127,7 +127,6 @@ if __name__ == "__main__":
         output_path = output_dir / file.split("/")[-1]
         if output_path.exists():
             continue
-        
         stats = defaultdict(int)
         annotated_sentences = []
         
@@ -135,7 +134,7 @@ if __name__ == "__main__":
             for idx, line in enumerate(tqdm(f, desc=f"Processing {Path(file).name}")):
                 sample = json.loads(line)
                 text = sample.get("text", "")
-                char_spans = sample.get("char_spans", [])
+                char_spans = sample.get("spans_char", [])
                 
                 if not text:
                     stats["samples_without_text"] += 1
@@ -189,14 +188,10 @@ if __name__ == "__main__":
                         continue
                     
                     new_sample = {
-                        k: v for k, v in sample.items() 
-                        if k not in {"tokens", "text", "token_spans", "char_spans"}
-                    }
-                    new_sample.update({
                         "id": f"{sample.get('id', idx)}-s{sent_idx}",
                         "text": sent_text,
                         "char_spans": remapped_char_spans,
-                    })
+                    }
                     
                     sample_sentences.append(new_sample)
                     stats["sentences_with_annotations"] += 1
