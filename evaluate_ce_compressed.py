@@ -1,20 +1,13 @@
-#!/usr/bin/env python3
-"""
-Main training script for Dual Encoder NER model.
-Run from project root: python train.py --config configs/default.json
-"""
-
 import os
-import sys
+import argparse
 import glob
 import json
 import warnings
-from pathlib import Path
 
 import torch
 import transformers
-from transformers import (AutoTokenizer, get_linear_schedule_with_warmup, HfArgumentParser, TrainingArguments)
-from datasets import load_dataset, DatasetDict
+from transformers import AutoTokenizer
+from datasets import DatasetDict
 from torch.utils.data import DataLoader
 from accelerate import Accelerator
 
@@ -33,11 +26,24 @@ from src.logger import setup_logger
 
 transformers.logging.set_verbosity_error()
 
-pretrained_model_name_or_paths = [
-    "/vol/tmp/goldejon/ner/cross-encoder-finerweb-bce/best_checkpoint",
-]
-test_file = "/vol/tmp/goldejon/ner/data/thainer_no_tokens/test.jsonl"
-all_test_files_path = "/vol/tmp/goldejon/ner/eval_data/*"
+MODEL_DIR = "/vol/tmp2/goldejon/paper_experiments"
+
+TEST_FILES = {
+    "panx": "/vol/tmp/goldejon/ner/eval_data/panx",
+    "masakhaner": "/vol/tmp/goldejon/ner/eval_data/masakhaner",
+    "multinerd": "/vol/tmp/goldejon/ner/eval_data/multinerd",
+    "multiconer_v1": "/vol/tmp/goldejon/ner/eval_data/multiconer_v1",
+    "multiconer_v2": "/vol/tmp/goldejon/ner/eval_data/multiconer_v2",
+    "dynamicner": "/vol/tmp/goldejon/ner/eval_data/dynamicner",
+    "uner": "/vol/tmp/goldejon/ner/eval_data/uner",
+    "panx_translated": "/vol/tmp/goldejon/ner/eval_data_translated/panx",
+    "masakhaner_translated": "/vol/tmp/goldejon/ner/eval_data_translated/masakhaner",
+    "multinerd_translated": "/vol/tmp/goldejon/ner/eval_data_translated/multinerd",
+    "multiconer_v1_translated": "/vol/tmp/goldejon/ner/eval_data_translated/multiconer_v1",
+    "multiconer_v2_translated": "/vol/tmp/goldejon/ner/eval_data_translated/multiconer_v2",
+    "dynamicner_translated": "/vol/tmp/goldejon/ner/eval_data_translated/dynamicner",
+    "uner_translated": "/vol/tmp/goldejon/ner/eval_data_translated/uner",
+}
 
 MAX_EVAL_SAMPLES_PER_DATASET = {
     "panx": 1000,
@@ -47,42 +53,17 @@ MAX_EVAL_SAMPLES_PER_DATASET = {
     "multiconer_v2": 10000,
     "dynamicner": -1,
     "uner": -1,
+    "panx_translated": 1000,
+    "masakhaner_translated": -1,
+    "multinerd_translated": -1,
+    "multiconer_v1_translated": 10000,
+    "multiconer_v2_translated": 10000,
+    "dynamicner_translated": -1,
+    "uner_translated": -1,
 }
 
-def main():
-    # run_single_eval()
-    run_complete_eval()
-
-def run_single_eval():
-    data_files = {}
-    data_files["test"] = test_file
-    dataset = load_dataset('json', data_files=data_files)
-    run_eval(dataset)
-
-def run_complete_eval():
-    for pretrained_model_name_or_path in pretrained_model_name_or_paths:
-        model_name = pretrained_model_name_or_path.split("/")[-2]
-        for eval_dataset in glob.glob(all_test_files_path):
-            for language_dataset in glob.glob(eval_dataset + "/*"):
-                dataset = DatasetDict.load_from_disk(language_dataset)
-
-                eval_split = "test" if "test" in dataset else "dev"
-                test_split = dataset[eval_split]
-
-                max_samples = MAX_EVAL_SAMPLES_PER_DATASET[language_dataset.split("/")[-2]]
-                if max_samples == -1 or max_samples > len(test_split):
-                    test_split = test_split.shuffle(seed=42)
-                else:
-                    test_split = test_split.shuffle(seed=42).select(range(max_samples))
-                if os.path.exists(f"results/{model_name}/{language_dataset.split("/")[-2]}"):
-                    continue
-
-                os.makedirs(f"results/{model_name}/{language_dataset.split("/")[-2]}", exist_ok=True)
-                result_save_path = f"results/{model_name}/{language_dataset.split("/")[-2]}/{language_dataset.split("/")[-1]}.json"
-                run_eval(test_split, pretrained_model_name_or_path, result_save_path)
-
-def run_eval(dataset, pretrained_model_name_or_path, result_save_path):
-    logger = setup_logger('eval.log')
+def run_eval(dataset, pretrained_model_name_or_path, result_save_path, prediction_threshold = None):
+    logger = setup_logger('eval_ce')
     logger.warning(
         f"Process rank: {0}, device: cuda, n_gpu: 1, "
         + f"distributed training: False, 16-bits training: True"
@@ -106,11 +87,14 @@ def run_eval(dataset, pretrained_model_name_or_path, result_save_path):
     test_labels = list(set([span["label"] for sample in dataset for span in sample["token_spans"]]))
     label2id = {label: idx for idx, label in enumerate(test_labels)}
 
+    if prediction_threshold is not None:
+        model.config.prediction_threshold = prediction_threshold
+
     if config.loss_fn == "contrastive":
         test_collator = EvalCollatorContrastiveCrossEncoder(
             token_encoder_tokenizer, 
             label2id=label2id,
-            max_seq_length=512, 
+            max_seq_length=512 if config.token_encoder != "jhu-clsp/mmBERT-base" else 1024, 
             format="tokens",
             loss_masking="subwords"
         )
@@ -118,7 +102,7 @@ def run_eval(dataset, pretrained_model_name_or_path, result_save_path):
         test_collator = EvalCollatorCompressedCrossEncoder(
             token_encoder_tokenizer, 
             label2id=label2id,
-            max_seq_length=512, 
+            max_seq_length=512 if config.token_encoder != "jhu-clsp/mmBERT-base" else 1024, 
             format="tokens",
             loss_masking="subwords"
         )
@@ -150,7 +134,64 @@ def run_eval(dataset, pretrained_model_name_or_path, result_save_path):
         }, f, indent=2)
     logger.info(f"\nTest results saved to {result_save_path}")
 
+def get_test_split(dataset, max_samples):
+    eval_split = "test" if "test" in dataset else "dev"
+    test_split = dataset[eval_split]
+    if max_samples == -1 or max_samples > len(test_split):
+        test_split = test_split.shuffle(seed=42)
+    else:
+        test_split = test_split.shuffle(seed=42).select(range(max_samples))
+    return test_split
+
+def run_single_eval(pretrained_model_name_or_path, test_file):
+    if test_file not in TEST_FILES:
+        raise ValueError(f"Test file {test_file} not found in TEST_FILES")
+    model_name = pretrained_model_name_or_path.split("/")[-1]
+    if not model_name.startswith("ce_"):
+        return
+    test_file_path = TEST_FILES[test_file]
+    for language_dataset in glob.glob(test_file_path + "/*"):
+        dataset = DatasetDict.load_from_disk(language_dataset)
+        max_samples = MAX_EVAL_SAMPLES_PER_DATASET[test_file]
+        test_split = get_test_split(dataset, max_samples)
+        result_save_path = f"/vol/tmp/goldejon/ner/paper_results/first_experiment/{model_name}/{test_file}/{language_dataset.split("/")[-1]}.json"
+        if os.path.exists(result_save_path):
+            continue
+        os.makedirs(os.path.dirname(result_save_path), exist_ok=True)
+        run_eval(test_split, pretrained_model_name_or_path + "/best_checkpoint", result_save_path)
+
+def run_complete_eval():
+    for pretrained_model_name_or_path in glob.glob(MODEL_DIR + "/*"):
+        model_name = pretrained_model_name_or_path.split("/")[-1]
+        if not model_name.startswith("ce_"):
+            continue
+        for eval_dataset_name, eval_dataset_path in TEST_FILES.items():
+            for language_dataset in glob.glob(eval_dataset_path + "/*"):
+                dataset = DatasetDict.load_from_disk(language_dataset)
+                max_samples = MAX_EVAL_SAMPLES_PER_DATASET[eval_dataset_name]
+                test_split = get_test_split(dataset, max_samples)
+                for prediction_threshold in [0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5]:
+                    result_save_path = f"/vol/tmp/goldejon/ner/paper_results/first_experiment/{model_name}/{eval_dataset_name}/{language_dataset.split("/")[-1]}_{prediction_threshold}.json"
+                    if os.path.exists(result_save_path):
+                        continue
+                    os.makedirs(os.path.dirname(result_save_path), exist_ok=True)
+                    run_eval(test_split, pretrained_model_name_or_path + "/best_checkpoint", result_save_path, prediction_threshold)
+
+def main(args):
+    if args.complete_eval:
+        run_complete_eval()
+    else:
+        if args.test_dataset is None:
+            raise ValueError("--test_dataset is required when evaluating a single dataset")
+        if args.pretrained_model_name_or_path is None:
+            raise ValueError("--pretrained_model_name_or_path is required when evaluating a single dataset")
+        run_single_eval(args.pretrained_model_name_or_path, args.test_dataset)
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pretrained_model_name_or_path", type=str, required=False)
+    parser.add_argument('--test_dataset', type=str, required=False)
+    parser.add_argument("--complete_eval", action="store_true")
+    args = parser.parse_args()
+    main(args)
 
