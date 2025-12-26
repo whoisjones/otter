@@ -69,6 +69,9 @@ class EvalCollatorCompressedCrossEncoder:
                 offsets = offset_mapping[i]
                 text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, self.max_span_length, self.label_offset, offsets)
 
+            if not start_mask and not end_mask and not span_mask:
+                return {}
+
             span_lookup = {span: idx for idx, span in enumerate(spans_idx)}
 
             valid_start_mask = torch.tensor([start_mask[:] for _ in range(len(self.label2id))])
