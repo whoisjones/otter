@@ -29,6 +29,9 @@ def evaluate(model, dataloader, accelerator):
     with torch.no_grad():
         pbar = tqdm(total=len(dataloader), desc="Evaluating", disable=not accelerator.is_local_main_process)
         for batch in dataloader:
+            if not batch:
+                continue
+
             output = model(
                 token_encoder_inputs=batch["token_encoder_inputs"],
                 type_encoder_inputs=batch["type_encoder_inputs"] if "type_encoder_inputs" in batch else None,
