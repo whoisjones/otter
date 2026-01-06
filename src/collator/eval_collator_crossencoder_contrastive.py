@@ -38,9 +38,9 @@ class EvalCollatorContrastiveCrossEncoder:
 
     def __call__(self, batch):
         if self.format == 'text':
-            texts = [sample['text'] for sample in batch]
+            texts = [sample['text'] for sample in batch if len(sample['text']) > 2]
         elif self.format == 'tokens':
-            texts = [sample["tokens"] for sample in batch]
+            texts = [sample["tokens"] for sample in batch if len(sample["tokens"]) > 2]
         else:
             raise ValueError(f"Invalid format: {self.format}")
 
@@ -76,11 +76,11 @@ class EvalCollatorContrastiveCrossEncoder:
             if self.loss_masking == 'subwords':
                 word_ids = token_encodings.word_ids(i)
                 offsets = offset_mapping[i]
-                text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_subwords_mask_cross_encoder(input_ids, word_ids, self.max_span_length, self.label_offset, offsets)
+                text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_subwords_mask_cross_encoder(input_ids, word_ids, self.max_span_length, self.label_offset, offsets, has_threshold_token=True)
             else:
                 sequence_ids = token_encodings.sequence_ids(i)
                 offsets = offset_mapping[i]
-                text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, self.max_span_length, self.label_offset, offsets)
+                text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, self.max_span_length, self.label_offset, offsets, has_threshold_token=True)
 
             span_subword_indices = torch.tensor(spans_idx)
             span_lengths = torch.tensor(span_lengths)

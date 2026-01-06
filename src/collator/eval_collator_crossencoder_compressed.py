@@ -20,9 +20,9 @@ class EvalCollatorCompressedCrossEncoder:
 
     def __call__(self, batch):
         if self.format == 'text':
-            texts = [sample['text'] for sample in batch]
+            texts = [sample['text'] for sample in batch if len(sample['text']) > 2]
         elif self.format == 'tokens':
-            texts = [sample["tokens"] for sample in batch]
+            texts = [sample["tokens"] for sample in batch if len(sample["tokens"]) > 2]
         else:
             raise ValueError(f"Invalid format: {self.format}")
 
