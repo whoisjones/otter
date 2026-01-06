@@ -8,7 +8,8 @@ __pycache__/
 .vscode/
 configs/*
 results/*
-ablations
+ablations/*
+artifacts/*
 
 # Distribution / packaging
 .Python
