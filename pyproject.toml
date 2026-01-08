@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ner-dataset-generation"
+version = "0.1.0"
+description = "NER Dataset Generation with Bi-Encoder and Cross-Encoder Models"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "Jonas Golde", email = "jonas.golde@gmail.com"}
+]
+keywords = ["ner", "named-entity-recognition", "dataset-generation", "transformers", "pytorch"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "torch",
+    "transformers",
+    "accelerate",
+    "datasets",
+    "tqdm",
+    "numpy",
+    "safetensors",
+]
+
+[project.urls]
+Homepage = "https://github.com/whoisjones/ner-dataset-generation"
+Repository = "https://github.com/whoisjones/ner-dataset-generation"
+Issues = "https://github.com/whoisjones/ner-dataset-generation/issues"
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.jsonl", "*.txt"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
