@@ -18,7 +18,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, message=".*gamma.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
 os.environ["PYTHONWARNINGS"] = "ignore::FutureWarning"
 
-from src.model import ContrastiveBiEncoderModel 
+from src.model import OtterContrastiveBiEncoderModel 
 from src.config import SpanModelConfig
 from src.collator import TrainCollatorContrastiveBiEncoder, EvalCollatorContrastiveBiEncoder
 from src.trainer import train, evaluate
@@ -69,7 +69,7 @@ def main():
         config = SpanModelConfig.from_pretrained(model_args.model_checkpoint)
         config.max_span_length = data_args.max_span_length
         config.prediction_threshold = "cls"
-        model = ContrastiveBiEncoderModel.from_pretrained(model_args.model_checkpoint)
+        model = OtterContrastiveBiEncoderModel.from_pretrained(model_args.model_checkpoint)
         model.config = config
     else:
         if model_args.token_encoder is None or model_args.type_encoder is None:

@@ -1,4 +1,4 @@
-from .model import BiEncoderModel, CrossEncoderModel, ContrastiveBiEncoderModel, ContrastiveCrossEncoderModel
+from .model import OtterBiEncoderModel, OtterCrossEncoderModel, OtterContrastiveBiEncoderModel, OtterContrastiveCrossEncoderModel
 from .collator import (
     TrainCollatorBiEncoder, EvalCollatorBiEncoder, TrainCollatorCrossEncoder, EvalCollatorCrossEncoder, TrainCollatorContrastiveBiEncoder, EvalCollatorContrastiveBiEncoder, TrainCollatorContrastiveCrossEncoder, EvalCollatorContrastiveCrossEncoder
 )
@@ -8,11 +8,10 @@ from .config import SpanModelConfig
 from .logger import setup_logger
 
 __all__ = [
-    "BiEncoderModel",
-    "CompressedBiEncoderModel",
-    "ContrastiveBiEncoderModel",
-    "ContrastiveCrossEncoderModel",
-    "CompressedCrossEncoderModel",
+    "OtterBiEncoderModel",
+    "OtterCrossEncoderModel",
+    "OtterContrastiveBiEncoderModel",
+    "OtterContrastiveCrossEncoderModel",
     "SpanModelConfig",
     "TrainCollatorBiEncoder",
     "EvalCollatorBiEncoder",

@@ -18,7 +18,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, message=".*gamma.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
 os.environ["PYTHONWARNINGS"] = "ignore::FutureWarning"
 
-from src.model import BiEncoderModel 
+from src.model import OtterBiEncoderModel 
 from src.config import SpanModelConfig
 from src.collator import TrainCollatorBiEncoder, EvalCollatorBiEncoder
 from src.trainer import train, evaluate
@@ -72,7 +72,7 @@ def main():
             logger.info(f"Loading model from checkpoint: {model_args.model_checkpoint}")
         config = SpanModelConfig.from_pretrained(model_args.model_checkpoint)
         config.max_span_length = data_args.max_span_length
-        model = BiEncoderModel.from_pretrained(model_args.model_checkpoint)
+        model = OtterBiEncoderModel.from_pretrained(model_args.model_checkpoint)
         model.config = config
     else:
         if model_args.token_encoder is None or model_args.type_encoder is None:
@@ -102,7 +102,7 @@ def main():
             type_encoder_pooling=model_args.type_encoder_pooling,
             prediction_threshold=model_args.prediction_threshold
         )
-        model = BiEncoderModel(config=config)
+        model = OtterBiEncoderModel(config=config)
 
     token_encoder_tokenizer = AutoTokenizer.from_pretrained(config.token_encoder)
     type_encoder_tokenizer = AutoTokenizer.from_pretrained(config.type_encoder)
@@ -260,7 +260,7 @@ def main():
             if accelerator.is_main_process:
                 logger.info(f"\nLoading best model from checkpoint: {best_checkpoint_path}")
                 logger.info(f"Best validation F1: {best_f1:.4f}")
-            best_model = BiEncoderModel.from_pretrained(str(best_checkpoint_path))
+            best_model = OtterBiEncoderModel.from_pretrained(str(best_checkpoint_path))
             best_model.eval()
             best_model = accelerator.prepare(best_model)
             model = best_model

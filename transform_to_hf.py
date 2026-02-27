@@ -416,6 +416,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    # from transformers import AutoModel
-    # model = AutoModel.from_pretrained("/vol/tmp2/goldejon/test_runs/ce_mmbert_finerweb_1M/best_checkpoint_new_format", trust_remote_code=True)
-    # print()

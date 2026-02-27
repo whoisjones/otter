@@ -18,7 +18,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, message=".*gamma.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
 os.environ["PYTHONWARNINGS"] = "ignore::FutureWarning"
 
-from src.model import ContrastiveCrossEncoderModel
+from src.model import OtterContrastiveCrossEncoderModel
 from src.config import SpanModelConfig
 from src.collator import TrainCollatorContrastiveCrossEncoder, EvalCollatorContrastiveCrossEncoder
 from src.trainer import train, evaluate
@@ -64,7 +64,7 @@ def main():
             logger.info(f"Loading model from checkpoint: {model_args.model_checkpoint}")
         config = SpanModelConfig.from_pretrained(model_args.model_checkpoint)
         config.max_span_length = data_args.max_span_length
-        model = ContrastiveCrossEncoderModel.from_pretrained(model_args.model_checkpoint)
+        model = OtterContrastiveCrossEncoderModel.from_pretrained(model_args.model_checkpoint)
         model.config = config
         try:
             tokenizer = AutoTokenizer.from_pretrained(model_args.model_checkpoint)
@@ -100,7 +100,7 @@ def main():
             type_encoder_pooling=model_args.type_encoder_pooling,
             prediction_threshold=model_args.prediction_threshold
         )
-        model = ContrastiveCrossEncoderModel(config=config)
+        model = OtterContrastiveCrossEncoderModel(config=config)
         tokenizer = AutoTokenizer.from_pretrained(config.token_encoder)
         tokenizer.add_tokens(["[LABEL]"], special_tokens=True)
         tokenizer.add_tokens(["[SPAN_THRESHOLD]"], special_tokens=True)
@@ -222,7 +222,7 @@ def main():
             if accelerator.is_main_process:
                 logger.info(f"\nLoading best model from checkpoint: {best_checkpoint_path}")
                 logger.info(f"Best validation F1: {best_f1:.4f}")
-            best_model = ContrastiveCrossEncoderModel.from_pretrained(str(best_checkpoint_path))
+            best_model = OtterContrastiveCrossEncoderModel.from_pretrained(str(best_checkpoint_path))
             best_model.eval()
             best_model = accelerator.prepare(best_model)
             model = best_model

@@ -18,7 +18,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, message=".*gamma.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
 os.environ["PYTHONWARNINGS"] = "ignore::FutureWarning"
 
-from src.model import CrossEncoderModel
+from src.model import OtterCrossEncoderModel
 from src.config import SpanModelConfig
 from src.collator import TrainCollatorCrossEncoder, EvalCollatorCrossEncoder
 from src.trainer import train, evaluate
@@ -72,7 +72,7 @@ def main():
             logger.info(f"Loading model from checkpoint: {model_args.model_checkpoint}")
         config = SpanModelConfig.from_pretrained(model_args.model_checkpoint)
         config.max_span_length = data_args.max_span_length
-        model = CrossEncoderModel.from_pretrained(model_args.model_checkpoint)
+        model = OtterCrossEncoderModel.from_pretrained(model_args.model_checkpoint)
         model.config = config
         try:
             tokenizer = AutoTokenizer.from_pretrained(model_args.model_checkpoint)
@@ -109,7 +109,7 @@ def main():
         )
         tokenizer = AutoTokenizer.from_pretrained(config.token_encoder)
         tokenizer.add_tokens(["[LABEL]"], special_tokens=True)
-        model = CrossEncoderModel(config=config)
+        model = OtterCrossEncoderModel(config=config)
         model.token_encoder.resize_token_embeddings(len(tokenizer.vocab) + 1)
 
     train_collator = TrainCollatorCrossEncoder(
@@ -225,7 +225,7 @@ def main():
             if accelerator.is_main_process:
                 logger.info(f"\nLoading best model from checkpoint: {best_checkpoint_path}")
                 logger.info(f"Best validation F1: {best_f1:.4f}")
-            best_model = CrossEncoderModel.from_pretrained(str(best_checkpoint_path))
+            best_model = OtterCrossEncoderModel.from_pretrained(str(best_checkpoint_path))
             best_model.eval()
             best_model = accelerator.prepare(best_model)
             model = best_model

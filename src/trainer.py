@@ -1,3 +1,4 @@
+import time
 import torch
 from tqdm import tqdm
 from pathlib import Path
@@ -16,15 +17,24 @@ def cycle(iterable):
         except StopIteration:
             iterator = iter(iterable)
 
-def evaluate(model, dataloader, accelerator):
-    """Evaluate the model on a dataset."""
+def evaluate(model, dataloader, accelerator, track_benchmark=False):
+    """Evaluate the model on a dataset. When track_benchmark=True, adds VRAM, latency, FLOPs to metrics["benchmark"]."""
     model.eval()
     unwrapped_model = accelerator.unwrap_model(model)
 
     total_loss = 0.0
     num_batches = 0
+    total_examples = 0
+    batch_times_sec = []
     
     metrics_by_type = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
+    
+    # Reset CUDA memory stats for accurate peak measurement
+    if track_benchmark and torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.synchronize()
+    
+    first_batch_for_flops = None
     
     with torch.no_grad():
         pbar = tqdm(total=len(dataloader), desc="Evaluating", disable=not accelerator.is_local_main_process)
@@ -32,11 +42,34 @@ def evaluate(model, dataloader, accelerator):
             if not batch:
                 continue
 
+            if track_benchmark and first_batch_for_flops is None:
+                first_batch_for_flops = {
+                    "token_encoder_inputs": {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in batch["token_encoder_inputs"].items()},
+                    "labels": {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in batch["labels"].items()},
+                    "id2label": batch["id2label"],
+                }
+                if batch.get("type_encoder_inputs"):
+                    first_batch_for_flops["type_encoder_inputs"] = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in batch["type_encoder_inputs"].items()}
+
+            # Time the forward pass (GPU-synchronized when available for accuracy)
+            if track_benchmark:
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                t0 = time.perf_counter()
+            
             output = model(
                 token_encoder_inputs=batch["token_encoder_inputs"],
                 type_encoder_inputs=batch["type_encoder_inputs"] if "type_encoder_inputs" in batch else None,
                 labels=batch["labels"]
             )
+
+            if track_benchmark:
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                batch_times_sec.append(time.perf_counter() - t0)
+            
+            batch_size = len(batch['labels']['ner'])
+            total_examples += batch_size
 
             if "loss" in output:
                 loss = output.loss
@@ -63,6 +96,37 @@ def evaluate(model, dataloader, accelerator):
     else:
         metrics = finalize_metrics(metrics_by_type)
         metrics["loss"] = 0.0
+
+    if track_benchmark and accelerator.is_local_main_process:
+        benchmark = {}
+        if torch.cuda.is_available():
+            benchmark["cuda_memory_allocated_mb"] = torch.cuda.max_memory_allocated() / (1024 ** 2)
+        if batch_times_sec and total_examples > 0:
+            benchmark["latency_ms_per_example"] = (sum(batch_times_sec) / total_examples) * 1000
+        # FLOPs
+        if first_batch_for_flops is not None:
+            try:
+                activities = [torch.profiler.ProfilerActivity.CPU]
+                if torch.cuda.is_available():
+                    activities.append(torch.profiler.ProfilerActivity.CUDA)
+                with torch.profiler.profile(
+                    activities=activities,
+                    with_flops=True,
+                ) as prof:
+                    _ = model(
+                        token_encoder_inputs=first_batch_for_flops["token_encoder_inputs"],
+                        type_encoder_inputs=first_batch_for_flops.get("type_encoder_inputs"),
+                        labels=first_batch_for_flops["labels"]
+                    )
+                total_flops = 0
+                for event in prof.key_averages():
+                    if hasattr(event, 'flops') and event.flops is not None:
+                        total_flops += event.flops
+                benchmark["flops_per_forward"] = total_flops
+            except Exception:
+                benchmark["flops_per_forward"] = None  # Profiler may fail on some setups
+        
+        metrics["benchmark"] = benchmark
 
     torch.cuda.empty_cache()
     

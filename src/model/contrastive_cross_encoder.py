@@ -9,7 +9,7 @@ from .base import SpanModelOutput, mlp
 from ..config import SpanModelConfig
 from ..loss import ContrastiveLoss
 
-class ContrastiveCrossEncoderModel(PreTrainedModel):
+class OtterContrastiveCrossEncoderModel(PreTrainedModel):
     """Dual encoder with span marker module."""
 
     def __init__(self, config):

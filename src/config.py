@@ -1,8 +1,3 @@
-import json
-import argparse
-from pathlib import Path
-from typing import Dict, Any
-
 from transformers import PretrainedConfig
 
 class SpanModelConfig(PretrainedConfig):
@@ -14,18 +9,21 @@ class SpanModelConfig(PretrainedConfig):
         type_encoder_pooling: str = "cls",
         loss_fn: str = "bce",
         max_span_length: int = 30,
-        linear_hidden_size: int = 128,
+        linear_hidden_size: int = 384,
         span_width_embedding_size: int = 128,
         dropout: float = 0.1,
         init_temperature: float = 0.03,
         prediction_threshold: float = 0.5,
-        bce_start_pos_weight: float = None,
-        bce_end_pos_weight: float = None,
-        bce_span_pos_weight: float = None,
-        focal_alpha: float = 0.75,
-        focal_gamma: float = 2.0,
-        contrastive_threshold_loss_weight: float = 0.5,
-        contrastive_span_loss_weight: float = 0.5,
+        start_loss_weight: float = 0.0,
+        end_loss_weight: float = 0.0,
+        span_loss_weight: float = 1.0,
+        bce_start_pos_weight: float = 0.0,
+        bce_end_pos_weight: float = 0.0,
+        bce_span_pos_weight: float = 0.0,
+        focal_alpha: float = 0.0,
+        focal_gamma: float = 0.0,
+        contrastive_threshold_loss_weight: float = 0.0,
+        contrastive_span_loss_weight: float = 0.0,
         contrastive_tau: float = 1.0,
         **kwargs
     ):
@@ -42,6 +40,9 @@ class SpanModelConfig(PretrainedConfig):
         self.init_temperature = init_temperature
         self.type_encoder_pooling = type_encoder_pooling
         self.prediction_threshold = prediction_threshold
+        self.start_loss_weight = start_loss_weight
+        self.end_loss_weight = end_loss_weight
+        self.span_loss_weight = span_loss_weight
         self.bce_start_pos_weight = bce_start_pos_weight
         self.bce_end_pos_weight = bce_end_pos_weight
         self.bce_span_pos_weight = bce_span_pos_weight

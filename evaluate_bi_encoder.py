@@ -7,7 +7,7 @@ import warnings
 import torch
 import transformers
 from transformers import AutoTokenizer
-from datasets import load_dataset, DatasetDict
+from datasets import load_dataset, DatasetDict, get_dataset_config_names
 from torch.utils.data import DataLoader
 from accelerate import Accelerator
 
@@ -18,7 +18,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, message=".*gamma.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
 os.environ["PYTHONWARNINGS"] = "ignore::FutureWarning"
 
-from src.model import BiEncoderModel, ContrastiveBiEncoderModel 
+from src.model import OtterBiEncoderModel, OtterContrastiveBiEncoderModel 
 from src.config import SpanModelConfig
 from src.collator import EvalCollatorBiEncoder, EvalCollatorContrastiveBiEncoder
 from src.trainer import evaluate
@@ -27,7 +27,14 @@ from src.logger import setup_logger
 transformers.logging.set_verbosity_error()
 
 
-def run_eval(pretrained_model_name_or_path, dataset, result_save_path, prediction_threshold = None, evaluation_format = "text"):
+def run_eval(
+    pretrained_model_name_or_path, 
+    dataset, 
+    result_save_path, 
+    prediction_threshold = None, 
+    evaluation_format = "text",
+    identifier = None
+    ):
     logger = setup_logger('eval_bi')
     logger.warning(
         f"Process rank: {0}, device: cuda, n_gpu: 1, "
@@ -42,9 +49,9 @@ def run_eval(pretrained_model_name_or_path, dataset, result_save_path, predictio
     
     config = SpanModelConfig.from_pretrained(pretrained_model_name_or_path)
     if config.loss_fn == "contrastive":
-        model = ContrastiveBiEncoderModel(config=config).to("cuda")
+        model = OtterContrastiveBiEncoderModel(config=config).to("cuda")
     else:
-        model = BiEncoderModel(config=config).to("cuda")
+        model = OtterBiEncoderModel(config=config).to("cuda")
     model = model.from_pretrained(pretrained_model_name_or_path)
 
     token_encoder_tokenizer = AutoTokenizer.from_pretrained(config.token_encoder)
@@ -102,6 +109,9 @@ def run_eval(pretrained_model_name_or_path, dataset, result_save_path, predictio
     logger.info(f"Test Recall: {test_metrics['micro']['recall']:.4f}")
     logger.info(f"Test F1 Score: {test_metrics['micro']['f1']:.4f}")
     logger.info("=" * 60)
+
+    if identifier is not None:
+        test_metrics['eval_from'] = identifier
         
     with open(result_save_path, 'w') as f:
         json.dump({
@@ -109,27 +119,38 @@ def run_eval(pretrained_model_name_or_path, dataset, result_save_path, predictio
         }, f, indent=2)
     logger.info(f"\nTest results saved to {result_save_path}")
 
-def run_single_eval(pretrained_model_name_or_path, evaluation_file, threshold, evaluation_format):
-    if evaluation_file.endswith(".jsonl"):
-        test_split = load_dataset('json', data_files=evaluation_file, split="train")
-    else:
-        dataset = DatasetDict.load_from_disk(evaluation_file)
-        eval_split = "test" if "test" in dataset else "dev"
-        test_split = dataset[eval_split]
-    os.makedirs("evals", exist_ok=True)
-    result_save_path = os.path.join("evals", datetime.now().strftime("eval_%Y%m%d_%H%M%S.json"))
-    run_eval(pretrained_model_name_or_path, test_split, result_save_path, threshold, evaluation_format)
-
 def main(args):
     if args.pretrained_model_name_or_path is None:
         raise ValueError("--pretrained_model_name_or_path is required when evaluating a single model")
-    run_single_eval(args.pretrained_model_name_or_path, args.evaluation_file, args.threshold, args.evaluation_format)
+    if args.evaluation_dataset.endswith(".jsonl"):
+        test_split = {f'{args.evaluation_dataset}': load_dataset('json', data_files=args.evaluation_dataset, split="train")}
+    elif os.path.exists(args.evaluation_dataset) and os.path.isdir(args.evaluation_dataset):
+        dataset = DatasetDict.load_from_disk(args.evaluation_dataset)
+        eval_split = "test" if "test" in dataset else "dev"
+        test_split = dataset[eval_split]
+        test_split = {f'{args.evaluation_dataset}': test_split}
+    else:
+        config_names = get_dataset_config_names(args.evaluation_dataset)
+        test_splits = {}
+        for config_name in config_names:
+            dataset = load_dataset(args.evaluation_dataset, config_name)
+            eval_split = "test" if "test" in dataset else "dev"
+            test_split = dataset[eval_split]
+            test_splits[f'{config_name}'] = test_split
+    
+    for identifier, test_split in test_splits.items():
+        os.makedirs("evals", exist_ok=True)
+        result_save_path = os.path.join("evals", datetime.now().strftime("eval_%Y%m%d_%H%M%S.json"))
+        if len(test_split) > args.max_eval_samples:
+            test_split = test_split.shuffle(seed=42).select(range(args.max_eval_samples))
+        run_eval(args.pretrained_model_name_or_path, test_split, result_save_path, args.threshold, args.evaluation_format, identifier)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--pretrained_model_name_or_path", type=str, required=True)
-    parser.add_argument("--evaluation_file", type=str, required=True)
+    parser.add_argument("--evaluation_dataset", type=str, required=True)
     parser.add_argument("--threshold", required=True)
+    parser.add_argument("--max_eval_samples", type=int, default=1000)
     parser.add_argument("--evaluation_format", type=str, choices=["text", "tokens"], default="text")
     args = parser.parse_args()
     main(args)

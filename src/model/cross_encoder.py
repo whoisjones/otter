@@ -9,7 +9,7 @@ from .base import SpanModelOutput, mlp
 from ..config import SpanModelConfig
 from ..loss import BCELoss, FocalLoss
 
-class CrossEncoderModel(PreTrainedModel):
+class OtterCrossEncoderModel(PreTrainedModel):
     """Dual encoder with span marker module."""
 
     def __init__(self, config):
