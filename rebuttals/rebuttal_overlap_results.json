@@ -1,0 +1,54 @@
+{
+  "lexical_results": {
+    "finerweb/eng": {
+      "mean_jsd": 0.15275372524299227,
+      "std_jsd": 0.0007237742464268288
+    },
+    "euro_glinerx/eng": {
+      "mean_jsd": 0.15676641932132848,
+      "std_jsd": 0.0014790524298209855
+    },
+    "pilener/eng": {
+      "mean_jsd": 0.16025448663503777,
+      "std_jsd": 0.0010550387056918408
+    },
+    "finerweb/deu": {
+      "mean_jsd": 0.16965821869176329,
+      "std_jsd": 0.0008221327248933933
+    },
+    "euro_glinerx/deu": {
+      "mean_jsd": 0.13603816874234567,
+      "std_jsd": 0.0017612444882580908
+    },
+    "finerweb/rus": {
+      "mean_jsd": 0.23508000888410008,
+      "std_jsd": 0.000745496004977187
+    }
+  },
+  "embedding_results": {
+    "finerweb/eng": {
+      "mean_f_dist": 2.3388419872182724,
+      "std_f_dist": 0.021997201878974568
+    },
+    "euro_glinerx/eng": {
+      "mean_f_dist": 0.9588926574594844,
+      "std_f_dist": 0.0179774407431525
+    },
+    "pilener/eng": {
+      "mean_f_dist": 3.5447622616650944,
+      "std_f_dist": 0.027609366212295622
+    },
+    "finerweb/deu": {
+      "mean_f_dist": 1.844379197322283,
+      "std_f_dist": 0.03142056512502557
+    },
+    "euro_glinerx/deu": {
+      "mean_f_dist": 0.37906736342737546,
+      "std_f_dist": 0.006015439298007103
+    },
+    "finerweb/rus": {
+      "mean_f_dist": 2.412814053036411,
+      "std_f_dist": 0.02242361886242499
+    }
+  }
+}

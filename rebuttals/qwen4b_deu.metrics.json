@@ -1,0 +1,14 @@
+{
+  "model": "qwen4b",
+  "lang": "deu",
+  "precision": 0.40432237730751913,
+  "recall": 0.6039004707464694,
+  "f1": 0.4843581445523193,
+  "benchmark": {
+    "cuda_memory_allocated_mb": 7747.33544921875,
+    "n_samples": 1000,
+    "total_time_sec": 1316.1912246067077,
+    "latency_ms_per_example": 1316.1912246067077,
+    "flops_per_forward": 8046200681
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "model": "qwen06",
+  "lang": "rus",
+  "precision": 0.02711928693343448,
+  "recall": 0.10759969902182091,
+  "f1": 0.04332020599818237,
+  "benchmark": {
+    "cuda_memory_allocated_mb": 1247.509765625,
+    "n_samples": 1000,
+    "total_time_sec": 1526.1283973203972,
+    "latency_ms_per_example": 1526.1283973203972,
+    "flops_per_forward": 1192581209
+  }
+}
