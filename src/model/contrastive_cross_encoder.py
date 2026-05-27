@@ -12,6 +12,8 @@ from ..loss import ContrastiveLoss
 class OtterContrastiveCrossEncoderModel(PreTrainedModel):
     """Dual encoder with span marker module."""
 
+    config_class = SpanModelConfig
+
     def __init__(self, config):
         super().__init__(config)
         self.config = config
@@ -20,7 +22,7 @@ class OtterContrastiveCrossEncoderModel(PreTrainedModel):
         self.max_span_length = config.max_span_length
         self.dropout = nn.Dropout(config.dropout)
         self.linear_hidden_size = config.linear_hidden_size
-        self.config.pruned_heads = token_config.pruned_heads
+        self.config.pruned_heads = getattr(token_config, "pruned_heads", {})
 
         self.type_linear = mlp(token_config.hidden_size, config.linear_hidden_size, config.dropout)
         self.token_start_linear = mlp(token_config.hidden_size, config.linear_hidden_size, config.dropout)
@@ -30,12 +32,11 @@ class OtterContrastiveCrossEncoderModel(PreTrainedModel):
         self.start_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
         self.end_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
         self.span_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
-        self.post_init()
-
         if "mt5" in config.token_encoder:
-            self.token_encoder = MT5EncoderModel.from_pretrained(config.token_encoder, config=token_config)
+            self.token_encoder = MT5EncoderModel(token_config)
         else:
-            self.token_encoder = AutoModel.from_pretrained(config.token_encoder, config=token_config)
+            self.token_encoder = AutoModel.from_config(token_config)
+        self.post_init()
 
         if config.loss_fn != "contrastive":
             raise ValueError(f"Invalid loss function: {config.loss_fn}")
@@ -135,52 +136,48 @@ class OtterContrastiveCrossEncoderModel(PreTrainedModel):
         else:
             return SpanModelOutput(start_logits=start_scores, end_logits=end_scores, span_logits=span_scores)
     
-    def save_pretrained(self, path: str):
+    def save_pretrained(self, path: str, **kwargs):
         path = Path(path)
-        path.mkdir(parents=True, exist_ok=True)
-
-        # 1) Save config
-        self.config.save_pretrained(str(path))
-
-        # 2) Save ALL model weights (including token_encoder)
-        torch.save(self.state_dict(), path / "model.bin")
+        tokenizer = kwargs.pop("tokenizer", None)
+        super().save_pretrained(str(path), **kwargs)
+        self.token_encoder.config.to_json_file(str(path / "token_encoder_config.json"))
+        if tokenizer is not None:
+            tokenizer.save_pretrained(str(path))
 
     @classmethod
-    def from_pretrained(cls, path: str) -> "ContrastiveCrossEncoderModel":
+    def from_pretrained(cls, path: str, *model_args, config=None, **kwargs):
         path = Path(path)
 
-        # 1) Load config
-        config = SpanModelConfig.from_pretrained(str(path))
+        span_cfg = SpanModelConfig.from_pretrained(str(path))
+        model = cls(span_cfg)
 
-        # 2) Init model (this builds token_encoder + heads, but not loaded yet)
-        model = cls(config)
+        weights_file = path / "model.safetensors"
+        if not weights_file.exists():
+            weights_file = path / "model.bin"
 
-        # 3) Load tokenizer to determine vocab size (tokenizer should be saved with the model)
-        vocab_size = None
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(str(path))
-            if hasattr(tokenizer, '__len__'):
-                vocab_size = len(tokenizer)
-            else:
-                vocab_size = len(tokenizer.vocab) if hasattr(tokenizer, 'vocab') else None
-        except Exception:
-            pass
-        
-        state_dict = torch.load(path / "model.bin", map_location="cpu")
-        
-        if vocab_size is None:
-            for key in state_dict.keys():
-                if 'token_encoder' in key and ('embedding' in key.lower() or 'shared' in key.lower()) and 'weight' in key:
-                    vocab_size = state_dict[key].shape[0]
-                    break
-        
-        if vocab_size is not None:
-            current_vocab_size = model.token_encoder.get_input_embeddings().weight.shape[0]
-            if vocab_size != current_vocab_size:
-                model.token_encoder.resize_token_embeddings(vocab_size)
+        # Load encoder weights from HuggingFace to get proper pretrained weights
+        if "mt5" in span_cfg.token_encoder:
+            model.token_encoder = MT5EncoderModel.from_pretrained(span_cfg.token_encoder, config=model.token_encoder.config)
+        else:
+            model.token_encoder = AutoModel.from_pretrained(span_cfg.token_encoder, config=model.token_encoder.config)
 
-        model.load_state_dict(state_dict, strict=True)
+        if weights_file.suffix == ".safetensors":
+            from safetensors.torch import load_file
+            state_dict = load_file(str(weights_file))
+        else:
+            state_dict = torch.load(str(weights_file), map_location="cpu")
 
+        # Resize token embeddings to match checkpoint vocab size
+        current_vocab_size = model.token_encoder.get_input_embeddings().weight.shape[0]
+        for key, val in state_dict.items():
+            if "token_encoder" in key and val.ndim == 2 and any(
+                tok in key for tok in ("word_embeddings.weight", "tok_embeddings.weight", "shared.weight", "embed_tokens.weight")
+            ):
+                if val.shape[0] != current_vocab_size:
+                    model.token_encoder.resize_token_embeddings(val.shape[0])
+                break
+
+        model.load_state_dict(state_dict, strict=False)
         return model
 
     def gradient_checkpointing_enable(self):

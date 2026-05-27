@@ -45,6 +45,55 @@ class FocalLoss(nn.Module):
         return loss
 
 
+class DiceLoss(nn.Module):
+    """Dice loss for binary classification, handles severe positive/negative imbalance.
+
+    Uses the smooth Dice formulation: 1 - (2*p*y + smooth) / (p + y + smooth)
+    Applied after sigmoid on logits.
+    """
+
+    def __init__(self, smooth: float = 1.0, square_denominator: bool = True):
+        super().__init__()
+        self.smooth = smooth
+        self.square_denominator = square_denominator
+
+    def forward(self, logits, labels, mask=None, pos_weight=None, **kwargs):
+        p = torch.sigmoid(logits)
+        if mask is not None:
+            p = p * mask
+            labels = labels * mask
+
+        if self.square_denominator:
+            numerator = 2 * (p * labels).sum() + self.smooth
+            denominator = (p * p).sum() + (labels * labels).sum() + self.smooth
+        else:
+            numerator = 2 * (p * labels).sum() + self.smooth
+            denominator = p.sum() + labels.sum() + self.smooth
+
+        return (1 - numerator / denominator) * 100
+
+
+class DiceFocalLoss(nn.Module):
+    """Combined Dice + Focal loss for long-tail entity type distributions.
+
+    Focal addresses rare entity types via down-weighting easy negatives;
+    Dice directly optimises the F1-like overlap metric.
+    """
+
+    def __init__(self, alpha: float = 0.5, gamma: float = 1.0, dice_weight: float = 0.5,
+                 focal_weight: float = 0.5, smooth: float = 1.0):
+        super().__init__()
+        self.dice = DiceLoss(smooth=smooth)
+        self.focal = FocalLoss(alpha=alpha, gamma=gamma)
+        self.dice_weight = dice_weight
+        self.focal_weight = focal_weight
+
+    def forward(self, logits, labels, mask=None, pos_weight=None, **kwargs):
+        dice_loss = self.dice(logits, labels, mask=mask)
+        focal_loss = self.focal(logits, labels, mask=mask, pos_weight=pos_weight)
+        return self.dice_weight * dice_loss + self.focal_weight * focal_loss
+
+
 class ContrastiveLoss(nn.Module):
 
     def __init__(self, tau: float = 1.0):

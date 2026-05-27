@@ -32,7 +32,7 @@ class TrainCollatorCrossEncoder:
             return {}
 
         if self.format == 'text':
-            label_text = "[LABEL] " + " [LABEL] ".join(unique_types) + " [SEP]"
+            label_text = "[LABEL] " + " [LABEL] ".join(unique_types) + " [SEP] "
             label_offset = len(label_text)
             input_texts = [label_text + text for text in texts]
         elif self.format == 'tokens':
@@ -52,8 +52,18 @@ class TrainCollatorCrossEncoder:
 
         if self.format == 'text':
             offset_mapping = token_encodings.pop("offset_mapping")
-            if label_offset > offset_mapping[0][-2][1]:
+            last_real_idx = token_encodings['attention_mask'][0].sum().item() - 2
+            if label_offset > offset_mapping[0][last_real_idx][1]:
                 return {}
+            # Derive text_start_index from character offsets (reliable for all samples).
+            # word_id-based search is fragile: tokens at the text boundary can get
+            # word_id=None when the text starts with a string the tokenizer treats as a
+            # special token, shifting text_start_index and causing shape mismatches.
+            batch_text_start_index = 0
+            for idx in range(len(offset_mapping[0])):
+                if int(offset_mapping[0][idx][0]) >= label_offset:
+                    batch_text_start_index = idx
+                    break
 
         label_token_subword_positions = [i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.token_encoder_tokenizer.convert_tokens_to_ids("[LABEL]")]
 
@@ -73,9 +83,19 @@ class TrainCollatorCrossEncoder:
                 sample_labels = batch[i]["token_spans" if self.format == 'tokens' else "char_spans"]
                 input_ids = token_encodings['input_ids'][i]
 
+                if self.format == 'text':
+                    offsets = offset_mapping[i]
                 if self.loss_masking == 'subwords':
                     word_ids = token_encodings.word_ids(i)
-                    text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_subwords_mask_cross_encoder(input_ids, word_ids, self.max_span_length, label_offset)
+                    if self.format == 'text':
+                        text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_subwords_mask_cross_encoder(
+                            input_ids, word_ids, self.max_span_length, None,
+                            text_start_index=batch_text_start_index,
+                        )
+                    else:
+                        text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_subwords_mask_cross_encoder(
+                            input_ids, word_ids, self.max_span_length, label_offset,
+                        )
                 else:
                     sequence_ids = token_encodings.sequence_ids(i)
                     offsets = offset_mapping[i]

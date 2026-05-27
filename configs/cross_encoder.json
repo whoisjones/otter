@@ -1,13 +1,14 @@
 {
     "run_name": "cross-encoder",
+    "architecture": "cross_encoder",
     "token_encoder": "google-bert/bert-base-uncased",
     "type_encoder": "none",
-    "dataset_name": "conll2003",
-    "annotation_format": "tokens",
+    "dataset_name": "finerweb",
+    "annotation_format": "text",
     "loss_masking": "subwords",
-    "train_file": "data/conll2003/train.jsonl",
-    "validation_file": "data/conll2003/validation.jsonl",
-    "test_file": "data/conll2003/test.jsonl",
+    "train_file": "/vol/tmp/goldejon/otter_resubmission/training_data/finerweb_splitted/eng.jsonl",
+    "validation_file": null,
+    "test_file": null,
     "output_dir": "models/cross_encoder",
     "per_device_train_batch_size": 8,
     "per_device_eval_batch_size": 8,
@@ -45,6 +46,6 @@
     "fp16": false,
     "bf16": true,
     "do_train": true,
-    "do_eval": true,
-    "do_predict": true
+    "do_eval": false,
+    "do_predict": false
 }

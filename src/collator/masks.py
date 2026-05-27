@@ -182,15 +182,16 @@ def compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, max_span_le
 
     return text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths
 
-def compressed_subwords_mask_cross_encoder(input_ids, word_ids, max_span_length, label_offset, has_threshold_token=False):
+def compressed_subwords_mask_cross_encoder(input_ids, word_ids, max_span_length, label_offset, has_threshold_token=False, text_start_index=None):
     num_tokens = len(input_ids)
-    text_start_index = 0
-    while text_start_index < num_tokens:
-        wid = word_ids[text_start_index]
-        if wid is None or wid < label_offset:
-            text_start_index += 1
-            continue
-        break
+    if text_start_index is None:
+        text_start_index = 0
+        while text_start_index < num_tokens:
+            wid = word_ids[text_start_index]
+            if wid is None or wid < label_offset:
+                text_start_index += 1
+                continue
+            break
 
     text_end_index = num_tokens - 1
     while text_end_index >= 0 and word_ids[text_end_index] is None:
@@ -205,11 +206,12 @@ def compressed_subwords_mask_cross_encoder(input_ids, word_ids, max_span_length,
 
     previous_word_id = None
 
-    for idx, word_id in enumerate(word_ids[text_start_index:]):
+    text_word_ids = word_ids[text_start_index:]
+    for idx, word_id in enumerate(text_word_ids):
         if word_id is not None:
             is_start = 1 if word_id != previous_word_id else 0
 
-            if idx + 1 == num_tokens or word_ids[idx + 1] != word_id:
+            if idx + 1 == len(text_word_ids) or text_word_ids[idx + 1] != word_id:
                 is_end = 1
             else:
                 is_end = 0

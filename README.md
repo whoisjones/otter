@@ -99,28 +99,33 @@ if __name__ == "__main__":
 
 ## Training
 
+All training is launched through the single entry point `train.py`. The
+architecture is selected via the `architecture` field of the config JSON
+(`bi_encoder`, `cross_encoder`, `contrastive_bi_encoder`, or
+`contrastive_cross_encoder`).
+
 ### Bi-Encoder Models
 
 **BCE Loss:**
 ```bash
-accelerate launch train_bi_encoder.py --config configs/bi_encoder.json
+accelerate launch train.py configs/bi_encoder.json
 ```
 
 **Contrastive Loss:**
 ```bash
-accelerate launch train_bi_encoder_contrastive.py --config configs/bi_encoder_contrastive.json
+accelerate launch train.py configs/bi_encoder_contrastive.json
 ```
 
 ### Cross-Encoder Models
 
 **BCE Loss:**
 ```bash
-accelerate launch train_cross_encoder.py --config configs/cross_encoder.json
+accelerate launch train.py configs/cross_encoder.json
 ```
 
 **Contrastive Loss:**
 ```bash
-accelerate launch train_cross_encoder_contrastive.py --config configs/cross_encoder_contrastive.json
+accelerate launch train.py configs/cross_encoder_contrastive.json
 ```
 
 ### Customizing Training Data
@@ -147,29 +152,20 @@ To change the test dataset, simply update the `test_file` path in the config to 
 
 ## Evaluation
 
-### Bi-Encoder Evaluation
+All evaluation is launched through the single entry point `evaluate.py`. The
+architecture is inferred from the checkpoint's config.
 
 ```bash
-python evaluate_bi_encoder.py \
-  --pretrained_model_name_or_path models/bi_encoder/checkpoint-5000 \
-  --evaluation_file data/conll2003/test.jsonl \
+python evaluate.py \
+  --pretrained_model_name_or_path models/bi_encoder/best_checkpoint \
+  --evaluation_dataset data/conll2003/test.jsonl \
   --threshold 0.5 \
   --evaluation_format tokens
 ```
 
-### Cross-Encoder Evaluation
+### Evaluation Dataset Formats
 
-```bash
-python evaluate_cross_encoder.py \
-  --pretrained_model_name_or_path models/cross_encoder/checkpoint-5000 \
-  --evaluation_file data/conll2003/test.jsonl \
-  --threshold 0.5 \
-  --evaluation_format tokens
-```
-
-### Evaluation File Formats
-
-The `--evaluation_file` argument accepts:
+The `--evaluation_dataset` argument accepts:
 - **JSONL files**: Path to a `.jsonl` file (e.g., `data/conll2003/test.jsonl`)
 - **HuggingFace DatasetDict**: Path to a directory containing a saved DatasetDict (e.g., `data/eval_data/panx/en`)
 

@@ -8,6 +8,10 @@ class ModelArguments:
     Arguments for Binder.
     """
 
+    architecture: Optional[str] = field(
+        default=None,
+        metadata={"help": "Model architecture. One of: 'bi_encoder', 'cross_encoder', 'contrastive_bi_encoder', 'contrastive_cross_encoder'."}
+    )
     token_encoder: Optional[str] = field(
         default=None,
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models. Required if model_checkpoint is not provided."}
@@ -67,7 +71,7 @@ class ModelArguments:
     loss_fn: str = field(
         default="bce",
         metadata={
-            "help": "The loss function to use. Can be 'bce' or 'focal'."
+            "help": "The loss function to use. One of 'bce', 'focal', 'dice', 'dice_focal'."
         },
     )
     focal_alpha: float = field(
@@ -81,6 +85,22 @@ class ModelArguments:
         metadata={
             "help": "Gamma for the focal loss."
         },
+    )
+    dice_smooth: float = field(
+        default=1.0,
+        metadata={"help": "Smoothing constant for Dice loss."},
+    )
+    dice_weight: float = field(
+        default=0.5,
+        metadata={"help": "Weight of the Dice component in DiceFocal loss."},
+    )
+    focal_weight: float = field(
+        default=0.5,
+        metadata={"help": "Weight of the Focal component in DiceFocal loss."},
+    )
+    contrastive_threshold_token: str = field(
+        default="label_token",
+        metadata={"help": "Token type used as prediction threshold in contrastive cross-encoder. One of 'label_token' or 'cls'."}
     )
     model_checkpoint: Optional[str] = field(
         default=None,

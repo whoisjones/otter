@@ -42,7 +42,7 @@ class TrainCollatorContrastiveCrossEncoder:
             return {}
 
         if self.format == 'text':
-            label_text = "[LABEL] " + " [LABEL] ".join(unique_types) + " [SEP]"
+            label_text = "[LABEL] " + " [LABEL] ".join(unique_types) + " [SEP] "
             if self.prediction_threshold == "label_token":
                 label_text = self.threshold_token + " " + label_text
             label_offset = len(label_text)
@@ -66,6 +66,11 @@ class TrainCollatorContrastiveCrossEncoder:
 
         if self.format == 'text':
             offset_mapping = token_encodings.pop("offset_mapping")
+            batch_text_start_index = 0
+            for idx in range(len(offset_mapping[0])):
+                if int(offset_mapping[0][idx][0]) >= label_offset:
+                    batch_text_start_index = idx
+                    break
 
         threshold_token_subword_position = [next(i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.token_encoder_tokenizer.convert_tokens_to_ids(self.threshold_token))]
         label_token_subword_positions = [i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.token_encoder_tokenizer.convert_tokens_to_ids("[LABEL]")]
@@ -86,9 +91,19 @@ class TrainCollatorContrastiveCrossEncoder:
             sample_labels = batch[i]["token_spans" if self.format == 'tokens' else "char_spans"]
             input_ids = token_encodings['input_ids'][i]
 
+            if self.format == 'text':
+                offsets = offset_mapping[i]
             if self.loss_masking == 'subwords':
                 word_ids = token_encodings.word_ids(i)
-                text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_subwords_mask_cross_encoder(input_ids, word_ids, self.max_span_length, label_offset, has_threshold_token=True)
+                if self.format == 'text':
+                    text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_subwords_mask_cross_encoder(
+                        input_ids, word_ids, self.max_span_length, None,
+                        has_threshold_token=True, text_start_index=batch_text_start_index,
+                    )
+                else:
+                    text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_subwords_mask_cross_encoder(
+                        input_ids, word_ids, self.max_span_length, label_offset, has_threshold_token=True,
+                    )
             else:
                 sequence_ids = token_encodings.sequence_ids(i)
                 offsets = offset_mapping[i]

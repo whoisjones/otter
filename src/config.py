@@ -25,6 +25,9 @@ class SpanModelConfig(PretrainedConfig):
         contrastive_threshold_loss_weight: float = 0.0,
         contrastive_span_loss_weight: float = 0.0,
         contrastive_tau: float = 1.0,
+        dice_smooth: float = 1.0,
+        dice_weight: float = 0.5,
+        focal_weight: float = 0.5,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -49,3 +52,6 @@ class SpanModelConfig(PretrainedConfig):
         self.contrastive_threshold_loss_weight = contrastive_threshold_loss_weight
         self.contrastive_span_loss_weight = contrastive_span_loss_weight
         self.contrastive_tau = contrastive_tau
+        self.dice_smooth = dice_smooth
+        self.dice_weight = dice_weight
+        self.focal_weight = focal_weight

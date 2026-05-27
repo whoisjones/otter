@@ -11,6 +11,10 @@ ablations/*
 artifacts/*
 eval_*
 scripts/
+models/
+logs/
+*.log
+wandb/
 
 # Distribution / packaging
 .Python

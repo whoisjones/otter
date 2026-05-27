@@ -38,7 +38,7 @@ def evaluate(model, dataloader, accelerator, track_benchmark=False):
     
     with torch.no_grad():
         pbar = tqdm(total=len(dataloader), desc="Evaluating", disable=not accelerator.is_local_main_process)
-        for batch in dataloader:
+        for batch_idx, batch in enumerate(dataloader):
             if not batch:
                 continue
 
@@ -57,11 +57,24 @@ def evaluate(model, dataloader, accelerator, track_benchmark=False):
                     torch.cuda.synchronize()
                 t0 = time.perf_counter()
             
-            output = model(
-                token_encoder_inputs=batch["token_encoder_inputs"],
-                type_encoder_inputs=batch["type_encoder_inputs"] if "type_encoder_inputs" in batch else None,
-                labels=batch["labels"]
-            )
+            try:
+                output = model(
+                    token_encoder_inputs=batch["token_encoder_inputs"],
+                    type_encoder_inputs=batch["type_encoder_inputs"] if "type_encoder_inputs" in batch else None,
+                    labels=batch["labels"]
+                )
+            except Exception as e:
+                import traceback
+                print(f"\n[EVAL ERROR] batch_idx={batch_idx}")
+                print(f"  input_ids shape : {batch['token_encoder_inputs']['input_ids'].shape}")
+                for k, v in batch["labels"].items():
+                    if hasattr(v, 'shape'):
+                        print(f"  labels[{k}] shape: {v.shape}")
+                    elif isinstance(v, list):
+                        print(f"  labels[{k}] len  : {len(v)}")
+                traceback.print_exc()
+                pbar.update(1)
+                continue
 
             if track_benchmark:
                 if torch.cuda.is_available():
@@ -207,14 +220,11 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
             
             if eval_dataloader is not None:
                 eval_metrics = evaluate(model, eval_dataloader, accelerator)
-            else:
-                eval_metrics = {"loss": 0.0, "micro": {"precision": 0.0, "recall": 0.0, "f1": 0.0}}
-            
-            if accelerator.is_main_process:
-                logger.info(f"Evaluation Loss: {eval_metrics['loss']:.4f}")
-                logger.info(f"Precision: {eval_metrics['micro']['precision']:.4f}")
-                logger.info(f"Recall: {eval_metrics['micro']['recall']:.4f}")
-                logger.info(f"F1 Score: {eval_metrics['micro']['f1']:.4f}")
+                if accelerator.is_main_process:
+                    logger.info(f"Evaluation Loss: {eval_metrics['loss']:.4f}")
+                    logger.info(f"Precision: {eval_metrics['micro']['precision']:.4f}")
+                    logger.info(f"Recall: {eval_metrics['micro']['recall']:.4f}")
+                    logger.info(f"F1 Score: {eval_metrics['micro']['f1']:.4f}")
             
             checkpoint_dir = Path(args.output_dir) / f"checkpoint-{global_step}"
             if accelerator.is_main_process:
@@ -227,37 +237,36 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
             # Synchronize all processes after checkpoint save to ensure it's fully written
             accelerator.wait_for_everyone()
             
-            current_f1 = eval_metrics['micro']['f1']
-            if current_f1 > best_f1:
-                best_f1 = current_f1
-                # Set best_checkpoint_path on all processes after sync (checkpoint is guaranteed to exist)
-                best_checkpoint_path = checkpoint_dir
-                patience_counter = 0
-                if accelerator.is_main_process:
-                    logger.info(f"New best F1: {best_f1:.4f} at checkpoint {checkpoint_dir}")
+            if eval_dataloader is not None:
+                current_f1 = eval_metrics['micro']['f1']
+                if current_f1 > best_f1:
+                    best_f1 = current_f1
+                    best_checkpoint_path = checkpoint_dir
+                    patience_counter = 0
+                    if accelerator.is_main_process:
+                        logger.info(f"New best F1: {best_f1:.4f} at checkpoint {checkpoint_dir}")
+                else:
+                    patience_counter += 1
+                    if accelerator.is_main_process:
+                        logger.info(f"No improvement. Patience: {patience_counter}/{patience}")
+
+                best_models.append((current_f1, checkpoint_dir, global_step))
+                best_models.sort(key=lambda x: x[0], reverse=True)
+
+                if len(best_models) > save_total_limit:
+                    _, worst_checkpoint_path, _ = best_models[save_total_limit]
+                    if accelerator.is_main_process:
+                        shutil.rmtree(worst_checkpoint_path)
+
+                best_models = best_models[:save_total_limit]
+
+                if patience_counter >= patience:
+                    if accelerator.is_main_process:
+                        logger.info(f"Early stopping triggered after {patience} evaluations without improvement.")
+                        logger.info(f"Best F1 score: {best_f1:.4f}")
+                    break
             else:
-                patience_counter += 1
-                if accelerator.is_main_process:
-                    logger.info(f"No improvement. Patience: {patience_counter}/{patience}")
-            
-            best_models.append((current_f1, checkpoint_dir, global_step))
-            best_models.sort(key=lambda x: x[0], reverse=True)
-            
-            if len(best_models) > save_total_limit:
-                _, worst_checkpoint_path, _ = best_models[save_total_limit]
-                if accelerator.is_main_process:
-                    shutil.rmtree(worst_checkpoint_path)
-            
-            best_models = best_models[:save_total_limit]
-            
-            if accelerator.is_main_process:
-                logger.info(f"{'='*50}\n")
-            
-            if patience_counter >= patience:
-                if accelerator.is_main_process:
-                    logger.info(f"Early stopping triggered after {patience} evaluations without improvement.")
-                    logger.info(f"Best F1 score: {best_f1:.4f}")
-                break
+                best_checkpoint_path = checkpoint_dir
             
             total_loss = 0.0
             num_batches = 0

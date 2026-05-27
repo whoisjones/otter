@@ -22,7 +22,7 @@ class EvalCollatorContrastiveCrossEncoder:
         self.threshold_token = '[SPAN_THRESHOLD]' if prediction_threshold == 'label_token' else '[CLS]'
         
         if self.format == 'text':
-            label_prefix = "[LABEL] " + " [LABEL] ".join(self.label2id.keys()) + " [SEP]"
+            label_prefix = "[LABEL] " + " [LABEL] ".join(self.label2id.keys()) + " [SEP] "
             if self.prediction_threshold == "label_token":
                 label_prefix = self.threshold_token + " " + label_prefix
             self.label_offset = len(label_prefix)
@@ -58,6 +58,12 @@ class EvalCollatorContrastiveCrossEncoder:
         
         if self.format == 'text':
             offset_mapping = token_encodings.pop("offset_mapping")
+            if self.loss_masking == 'subwords':
+                _batch_text_start_index = 0
+                for _idx in range(len(offset_mapping[0])):
+                    if int(offset_mapping[0][_idx][0]) >= self.label_offset:
+                        _batch_text_start_index = _idx
+                        break
 
         threshold_token_subword_position = [next(i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.tokenizer.convert_tokens_to_ids(self.threshold_token))]
         label_token_subword_positions = [i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.tokenizer.convert_tokens_to_ids("[LABEL]")]
@@ -75,7 +81,16 @@ class EvalCollatorContrastiveCrossEncoder:
 
             if self.loss_masking == 'subwords':
                 word_ids = token_encodings.word_ids(i)
-                text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_subwords_mask_cross_encoder(input_ids, word_ids, self.max_span_length, self.label_offset, has_threshold_token=True)
+                if self.format == 'text':
+                    offsets = offset_mapping[i]
+                    text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_subwords_mask_cross_encoder(
+                        input_ids, word_ids, self.max_span_length, None,
+                        has_threshold_token=True, text_start_index=_batch_text_start_index,
+                    )
+                else:
+                    text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_subwords_mask_cross_encoder(
+                        input_ids, word_ids, self.max_span_length, self.label_offset, has_threshold_token=True,
+                    )
             else:
                 sequence_ids = token_encodings.sequence_ids(i)
                 offsets = offset_mapping[i]
@@ -165,4 +180,3 @@ class EvalCollatorContrastiveCrossEncoder:
         }
 
         return batch
-

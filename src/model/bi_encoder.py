@@ -1,19 +1,23 @@
-from typing import Union, Optional
 import os
-
-import torch
-from torch import nn
-import torch.nn.functional as F
-import numpy as np
-from transformers import AutoModel, AutoConfig, PreTrainedModel, MT5EncoderModel, PretrainedConfig
 from pathlib import Path
+from typing import Optional, Union
 
-from .base import SpanModelOutput, mlp
+import numpy as np
+import torch
+import torch.nn.functional as F
+from torch import nn
+from transformers import (AutoConfig, AutoModel, MT5EncoderModel,
+                          PretrainedConfig, PreTrainedModel)
+
 from ..config import SpanModelConfig
-from ..loss import BCELoss, FocalLoss
+from ..loss import BCELoss, FocalLoss, DiceLoss, DiceFocalLoss
+from .base import SpanModelOutput, mlp
+
 
 class OtterBiEncoderModel(PreTrainedModel):
     """Dual encoder with span marker module."""
+
+    config_class = SpanModelConfig
 
     def __init__(self, config, token_config=None, type_config=None):
         super().__init__(config)
@@ -21,15 +25,15 @@ class OtterBiEncoderModel(PreTrainedModel):
         self.token_config = token_config
         self.type_config = type_config
 
-        if self.token_config is not None:
+        if self.token_config is None:
             self.token_config = AutoConfig.from_pretrained(config.token_encoder)
-        if self.type_config is not None:
+        if self.type_config is None:
             self.type_config = AutoConfig.from_pretrained(config.type_encoder)
 
         self.max_span_length = config.max_span_length
         self.dropout = nn.Dropout(config.dropout)
         self.linear_hidden_size = config.linear_hidden_size
-        self.config.pruned_heads = self.token_config.pruned_heads
+        self.config.pruned_heads = getattr(self.token_config, "pruned_heads", {})
 
         self.type_linear = mlp(self.type_config.hidden_size, config.linear_hidden_size, config.dropout)
         self.token_start_linear = mlp(self.token_config.hidden_size, config.linear_hidden_size, config.dropout)
@@ -40,21 +44,30 @@ class OtterBiEncoderModel(PreTrainedModel):
         self.start_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
         self.end_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
         self.span_logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1 / config.init_temperature))
-        self.post_init()
-
         if "mt5" in config.token_encoder:
-            self.token_encoder = MT5EncoderModel.from_pretrained(config.token_encoder, config=self.token_config)
+            self.token_encoder = MT5EncoderModel(self.token_config)
         else:
-            self.token_encoder = AutoModel.from_pretrained(config.token_encoder, config=self.token_config)
+            self.token_encoder = AutoModel.from_config(self.token_config)
         if "mt5" in config.type_encoder:
-            self.type_encoder = MT5EncoderModel.from_pretrained(config.type_encoder, config=self.type_config)
+            self.type_encoder = MT5EncoderModel(self.type_config)
         else:
-            self.type_encoder = AutoModel.from_pretrained(config.type_encoder, config=self.type_config)
+            self.type_encoder = AutoModel.from_config(self.type_config)
+        self.post_init()
 
         if config.loss_fn == "focal":
             self.loss_fn = FocalLoss(alpha=config.focal_alpha, gamma=config.focal_gamma)
         elif config.loss_fn == "bce":
             self.loss_fn = BCELoss()
+        elif config.loss_fn == "dice":
+            self.loss_fn = DiceLoss(smooth=getattr(config, "dice_smooth", 1.0))
+        elif config.loss_fn == "dice_focal":
+            self.loss_fn = DiceFocalLoss(
+                alpha=config.focal_alpha,
+                gamma=config.focal_gamma,
+                dice_weight=getattr(config, "dice_weight", 0.5),
+                focal_weight=getattr(config, "focal_weight", 0.5),
+                smooth=getattr(config, "dice_smooth", 1.0),
+            )
         else:
             raise ValueError(f"Invalid loss function: {config.loss_fn}")
 
@@ -162,11 +175,19 @@ class OtterBiEncoderModel(PreTrainedModel):
         if not isinstance(save_directory, Path):
             save_directory = Path(save_directory)
 
+        token_tokenizer = kwargs.pop("token_tokenizer", None)
+        type_tokenizer = kwargs.pop("type_tokenizer", None)
+
         super().save_pretrained(save_directory, **kwargs)
 
         self.token_encoder.config.to_json_file(str(save_directory / "token_encoder_config.json"))
         self.type_encoder.config.to_json_file(str(save_directory / "type_encoder_config.json"))
-    
+
+        if token_tokenizer is not None:
+            token_tokenizer.save_pretrained(str(save_directory / "token_tokenizer"))
+        if type_tokenizer is not None:
+            type_tokenizer.save_pretrained(str(save_directory / "type_tokenizer"))
+
     @classmethod
     def from_pretrained(
         cls,
@@ -177,22 +198,47 @@ class OtterBiEncoderModel(PreTrainedModel):
     ):
         base_path = Path(pretrained_model_name_or_path)
 
+        # New format: model.safetensors
+        model_safetensors = base_path / "model.safetensors"
         token_encoder_config_path = base_path / "token_encoder_config.json"
         type_encoder_config_path = base_path / "type_encoder_config.json"
 
-        if token_encoder_config_path.exists():
-            token_config = AutoConfig.from_pretrained(token_encoder_config_path)
-            kwargs["token_config"] = token_config
-        if type_encoder_config_path.exists():
-            type_config = AutoConfig.from_pretrained(type_encoder_config_path)
-            kwargs["type_config"] = type_config
+        if model_safetensors.exists():
+            span_cfg = SpanModelConfig.from_pretrained(str(base_path))
+            token_config = AutoConfig.from_pretrained(token_encoder_config_path) if token_encoder_config_path.exists() else AutoConfig.from_pretrained(span_cfg.token_encoder)
+            type_config = AutoConfig.from_pretrained(type_encoder_config_path) if type_encoder_config_path.exists() else AutoConfig.from_pretrained(span_cfg.type_encoder)
+            model = cls(span_cfg, token_config=token_config, type_config=type_config)
+            from safetensors.torch import load_file
+            state_dict = load_file(str(model_safetensors))
+            model.load_state_dict(state_dict, strict=False)
+            return model
 
-        return super().from_pretrained(
-            pretrained_model_name_or_path,
-            *model_args,
-            config=config,
-            **kwargs,
-        )
+        # Legacy format: token_encoder/ + type_encoder/ dirs + model.pt (span head only)
+        span_cfg = SpanModelConfig.from_pretrained(str(base_path))
+        token_encoder_dir = base_path / "token_encoder"
+        type_encoder_dir = base_path / "type_encoder"
+        token_config = AutoConfig.from_pretrained(str(token_encoder_dir) if token_encoder_dir.exists() else span_cfg.token_encoder)
+        type_config = AutoConfig.from_pretrained(str(type_encoder_dir) if type_encoder_dir.exists() else span_cfg.type_encoder)
+        model = cls(span_cfg, token_config=token_config, type_config=type_config)
+        if token_encoder_dir.exists():
+            if "mt5" in span_cfg.token_encoder:
+                model.token_encoder = MT5EncoderModel.from_pretrained(str(token_encoder_dir), config=token_config)
+            else:
+                model.token_encoder = AutoModel.from_pretrained(str(token_encoder_dir), config=token_config)
+        if type_encoder_dir.exists():
+            if "mt5" in span_cfg.type_encoder:
+                model.type_encoder = MT5EncoderModel.from_pretrained(str(type_encoder_dir), config=type_config)
+            else:
+                model.type_encoder = AutoModel.from_pretrained(str(type_encoder_dir), config=type_config)
+        weights_file = base_path / "span_model_weights.pt"
+        if not weights_file.exists():
+            weights_file = base_path / "model.pt"
+        if weights_file.exists():
+            span_state = torch.load(weights_file, map_location="cpu")
+            model_keys = set(model.state_dict().keys())
+            filtered = {k: v for k, v in span_state.items() if k in model_keys}
+            model.load_state_dict(filtered, strict=False)
+        return model
 
     def gradient_checkpointing_enable(self):
         self.token_encoder.gradient_checkpointing_enable()
