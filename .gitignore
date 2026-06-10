@@ -9,7 +9,7 @@ __pycache__/
 results/*
 ablations/*
 artifacts/*
-eval_*
+eval_*/
 scripts/
 models/
 logs/
