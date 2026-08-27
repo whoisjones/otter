@@ -171,8 +171,10 @@ def _stage_tokenizers(spec, out_dir):
 
 def _run_example(out_dir):
     if not (out_dir / "model.safetensors").exists():
-        print("    (no local weights -- model card omits sample output)")
-        return None
+        raise FileNotFoundError(
+            f"--example needs weights at {out_dir / 'model.safetensors'}. "
+            "Without them the model card would silently ship without its sample output."
+        )
     from transformers import AutoModel
 
     model = AutoModel.from_pretrained(str(out_dir), trust_remote_code=True)
@@ -294,10 +296,27 @@ def main():
         "--example",
         action="store_true",
         help="Run each model to put its real output in the model card. "
-        "Requires model.safetensors in the staged directory.",
+        "Requires model.safetensors in each staged directory; errors out if absent.",
     )
     parser.add_argument("--push", action="store_true", help="Publish the staged repos.")
     args = parser.parse_args()
+
+    # Check every repo before staging any of them: a missing checkout would
+    # otherwise surface only after the earlier repos had already been pushed.
+    if args.example:
+        missing = [
+            name
+            for name in args.only
+            if not (Path(args.out_dir) / name / "model.safetensors").exists()
+        ]
+        if missing:
+            parser.error(
+                "--example needs model.safetensors staged for: "
+                + ", ".join(missing)
+                + f".\nLink each repo's published weights into {args.out_dir}/<name>/ first, "
+                "e.g. via huggingface_hub.hf_hub_download(f'whoisjones/<name>', "
+                "'model.safetensors'). They are never uploaded."
+            )
 
     api = HfApi()
     for name in args.only:
