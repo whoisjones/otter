@@ -7,9 +7,11 @@ __pycache__/
 *.so
 .vscode/
 results/*
+# Evaluation outputs -- never tracked
+evals/
 ablations/*
 artifacts/*
-eval_*
+eval_*/
 scripts/
 models/
 logs/

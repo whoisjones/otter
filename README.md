@@ -40,61 +40,58 @@ You can also use word-segmented inputs and labels using the names `tokens` and `
 
 ## Usage
 
-You can use our off-the-shelf models from the HF hub but you need to download the [collator file](https://huggingface.co/whoisjones/otter-bi-mmbert/blob/main/collate_fn.py) and put it into the project directory.
+The four released models are self-contained: `predict` takes raw strings and a list of
+entity types in plain language, and returns character spans.
 
 ```python
-from transformers import AutoModelForTokenClassification, AutoTokenizer, AutoConfig
-from torch.utils.data import DataLoader
-from collate_fn import AllLabelsCollator # import this file from the model repository
-from datasets import DatasetDict, Dataset
+from transformers import AutoModel
 
-def main():
-    dataset = DatasetDict({
-        "test": Dataset.from_list([
-            {
-                "text": "John Doe works at OpenAI in San Francisco.",
-                "char_spans": [
-                    {"start": 0, "end": 8, "label": "person"},
-                    {"start": 18, "end": 24, "label": "organization"},
-                    {"start": 28, "end": 41, "label": "location"},
-                ]
-            },
-            {
-                "text": "Alice and Bob visited the Eiffel Tower.",
-                "char_spans": [
-                    {"start": 0, "end": 5, "label": "person"},
-                    {"start": 10, "end": 13, "label": "person"},
-                    {"start": 28, "end": 40, "label": "location"},
-                ]
-            },
-            {
-                "text": "Amazon was founded by Jeff Bezos.",
-                "char_spans": [
-                    {"start": 0, "end": 6, "label": "organization"},
-                    {"start": 22, "end": 32, "label": "person"},
-                ]
-            }
-        ])
-    })
+model = AutoModel.from_pretrained("whoisjones/otter-cross-mmbert", trust_remote_code=True)
+model.eval()
 
-    config = AutoConfig.from_pretrained("whoisjones/otter-bi-mmbert", trust_remote_code=True)
-    model = AutoModelForTokenClassification.from_pretrained("whoisjones/otter-bi-mmbert", trust_remote_code=True)
-    token_encoder_tokenizer = AutoTokenizer.from_pretrained(config.token_encoder)
-    type_encoder_tokenizer = AutoTokenizer.from_pretrained(config.type_encoder)
+entities = model.predict(
+    "Angela Merkel besuchte gestern das Brandenburger Tor in Berlin.",
+    labels=["person", "organization", "location"],
+)
 
-    labels = list(set([span["label"] for sample in dataset["test"] for span in sample["char_spans"]]))
-    label2id = {label: idx for idx, label in enumerate(labels)}
-    collator = AllLabelsCollator(token_encoder_tokenizer, type_encoder_tokenizer, label2id=label2id)
-    dataloader = DataLoader(dataset["test"], batch_size=1, collate_fn=collator)
+for entity in entities:
+    print(f"{entity['text']!r:25} {entity['label']:15} {entity['score']:.2f}")
+```
 
-    for batch in dataloader:
-        gold_labels = batch["labels"]["ner"]
-        predictions = model.predict(batch, threshold=0.1)
-        print(f"Gold labels: {gold_labels}")
-        print(f"Predictions: {predictions}")
+```
+'Angela Merkel'           person          0.99
+'Brandenburger Tor'       location        0.82
+'Berlin'                  location        0.90
+```
 
-if __name__ == "__main__":
-    main()
+Pass a list of strings to run on a batch; you then get one list of entities per input,
+in the same order.
+
+```python
+model = model.to("cuda")
+results = model.predict(texts, labels=["person", "location"], batch_size=16, threshold=0.5)
+```
+
+`threshold` defaults to `config.prediction_threshold` -- 0.5 for the cross-encoders and
+0.2 for the bi-encoders, from the macro-F1 calibration sweep.
+
+| Model | Architecture | Encoder |
+|---|---|---|
+| [`whoisjones/otter-bi-mmbert`](https://huggingface.co/whoisjones/otter-bi-mmbert) | bi-encoder | mmBERT-base |
+| [`whoisjones/otter-cross-mmbert`](https://huggingface.co/whoisjones/otter-cross-mmbert) | cross-encoder | mmBERT-base |
+| [`whoisjones/otter-bi-rembert`](https://huggingface.co/whoisjones/otter-bi-rembert) | bi-encoder | RemBERT |
+| [`whoisjones/otter-cross-rembert`](https://huggingface.co/whoisjones/otter-cross-rembert) | cross-encoder | RemBERT |
+
+### Publishing the models
+
+`scripts/hf_checkpoint_conversion/prepare_hub_repos.py` rebuilds the Hub repositories
+from `scripts/hf_checkpoint_conversion/hub_files/`. It stages the config, the
+`trust_remote_code` modules, the tokenizers and the model card, and leaves the published
+weights untouched.
+
+```bash
+python scripts/hf_checkpoint_conversion/prepare_hub_repos.py --out-dir build/hub
+python scripts/hf_checkpoint_conversion/prepare_hub_repos.py --out-dir build/hub --push
 ```
 
 ## Training

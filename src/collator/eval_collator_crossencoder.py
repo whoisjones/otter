@@ -1,38 +1,20 @@
 import torch
-import logging
 from .masks import compressed_all_spans_mask_cross_encoder, compressed_subwords_mask_cross_encoder, first_text_token_index
 
-logger = logging.getLogger(__name__)
-
-class EvalCollatorContrastiveCrossEncoder:
-    def __init__(self, tokenizer, label2id, max_seq_length=512, max_span_length=30, format='text', loss_masking='none', prediction_threshold='label_token'):
+class EvalCollatorCrossEncoder:
+    def __init__(self, tokenizer, label2id, max_seq_length=512, max_span_length=30, format='text', loss_masking='none'):
         self.tokenizer = tokenizer
         self.label2id = label2id
         self.max_seq_length = max_seq_length
         self.max_span_length = max_span_length
         self.format = format
         self.loss_masking = loss_masking
-        
-        if prediction_threshold not in ['label_token', 'cls']:
-            raise ValueError(f"Invalid threshold token: {prediction_threshold}")
-        if prediction_threshold == 'cls' and not self.tokenizer.cls_token == '[CLS]':
-            logger.warning(f"CLS token not found in tokenizer. Using [SPAN_THRESHOLD] instead.")
-            prediction_threshold = 'label_token'
-        self.prediction_threshold = prediction_threshold
-        self.threshold_token = '[SPAN_THRESHOLD]' if prediction_threshold == 'label_token' else '[CLS]'
-        
         if self.format == 'text':
-            label_prefix = "[LABEL] " + " [LABEL] ".join(self.label2id.keys()) + " [SEP] "
-            if self.prediction_threshold == "label_token":
-                label_prefix = self.threshold_token + " " + label_prefix
-            self.label_offset = len(label_prefix)
-            self.label_prefix = label_prefix
+            self.label_prefix = "[LABEL] " + " [LABEL] ".join(self.label2id.keys()) + " [SEP] "
+            self.label_offset = len(self.label_prefix)
         elif self.format == 'tokens':
-            label_list = [tok for label in self.label2id.keys() for tok in ('[LABEL]', label)] + ['[SEP]']
-            if self.prediction_threshold == "label_token":
-                label_list = [self.threshold_token] + label_list
-            self.label_offset = len(label_list)
-            self.label_prefix = label_list
+            self.label_prefix = [tok for label in self.label2id.keys() for tok in ('[LABEL]', label)] + ['[SEP]']
+            self.label_offset = len(self.label_prefix)
         if loss_masking not in ['none', 'subwords']:
             raise ValueError(f"Invalid loss masking: {loss_masking}")
 
@@ -45,7 +27,7 @@ class EvalCollatorContrastiveCrossEncoder:
             raise ValueError(f"Invalid format: {self.format}")
 
         input_texts = [self.label_prefix + text for text in texts]
-        
+
         token_encodings = self.tokenizer(
             input_texts,
             padding=True,
@@ -58,16 +40,31 @@ class EvalCollatorContrastiveCrossEncoder:
         
         if self.format == 'text':
             offset_mapping = token_encodings.pop("offset_mapping")
-            _batch_text_start_index = first_text_token_index(offset_mapping, self.label_offset)
 
-        threshold_token_subword_position = [next(i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.tokenizer.convert_tokens_to_ids(self.threshold_token))]
         label_token_subword_positions = [i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.tokenizer.convert_tokens_to_ids("[LABEL]")]
+
+        # Compute text_start_index once from sample 0 using character offsets.
+        # The label prefix is identical for every sample in the batch, so the first
+        # token whose char-start >= len(label_prefix) is at the same token position
+        # for all samples.  Using word_ids instead is fragile: tokens at the text
+        # boundary can get word_id=None (e.g. when the text starts with a string the
+        # tokenizer treats as a special token), which shifts text_start_index by 1
+        # and causes torch.stack to fail on mismatched shapes.
+        if self.format == 'text':
+            _batch_text_start_index = first_text_token_index(offset_mapping, self.label_offset)
 
         annotations = {
             "ner": [],
-            "span_lengths": [],
+            "start_labels": [],
+            "end_labels": [],
+            "span_labels": [],
+            "valid_start_mask": [],
+            "valid_end_mask": [],
+            "valid_span_mask": [],
             "span_subword_indices": [],
-            "valid_span_mask": []
+            "span_lengths": [],
+            "label_positions": [],
+            "text_start_index": []
         }
 
         for i in range(len(token_encodings['input_ids'])):
@@ -80,23 +77,34 @@ class EvalCollatorContrastiveCrossEncoder:
                     offsets = offset_mapping[i]
                     text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_subwords_mask_cross_encoder(
                         input_ids, word_ids, self.max_span_length, None,
-                        has_threshold_token=True, text_start_index=_batch_text_start_index,
+                        text_start_index=_batch_text_start_index,
                     )
                 else:
                     text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_subwords_mask_cross_encoder(
-                        input_ids, word_ids, self.max_span_length, self.label_offset, has_threshold_token=True,
+                        input_ids, word_ids, self.max_span_length, self.label_offset,
                     )
             else:
                 sequence_ids = token_encodings.sequence_ids(i)
                 offsets = offset_mapping[i]
                 text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_all_spans_mask_cross_encoder(
-                    input_ids, sequence_ids, self.max_span_length, self.label_offset, offsets, has_threshold_token=True,
+                    input_ids, sequence_ids, self.max_span_length, self.label_offset, offsets,
                     text_start_index=_batch_text_start_index if self.format == 'text' else None,
                 )
 
+            if not start_mask and not end_mask and not span_mask:
+                return {}
+
+            span_lookup = {span: idx for idx, span in enumerate(spans_idx)}
+
+            valid_start_mask = torch.tensor([start_mask[:] for _ in range(len(self.label2id))])
+            valid_end_mask = torch.tensor([end_mask[:] for _ in range(len(self.label2id))])
+            valid_span_mask = torch.tensor([span_mask[:] for _ in range(len(self.label2id))])
             span_subword_indices = torch.tensor(spans_idx)
             span_lengths = torch.tensor(span_lengths)
-            valid_span_mask = torch.tensor([span_mask[:] for _ in range(len(self.label2id))])
+
+            start_labels = torch.zeros(len(self.label2id), len(input_ids) - text_start_index)
+            end_labels = torch.zeros(len(self.label2id), len(input_ids) - text_start_index)
+            span_labels = torch.zeros(len(self.label2id), len(spans_idx))
 
             annotation = []
 
@@ -117,9 +125,10 @@ class EvalCollatorContrastiveCrossEncoder:
 
                         if start_label_index > end_label_index:
                             continue
-                        
-                        start_label_index += 1
-                        end_label_index += 1
+
+                        start_labels[self.label2id[label["label"]], start_label_index - text_start_index] = 1
+                        end_labels[self.label2id[label["label"]], end_label_index - text_start_index] = 1
+                        span_labels[self.label2id[label["label"]], span_lookup[(start_label_index - text_start_index, end_label_index - text_start_index)]] = 1
 
                         annotation.append({
                             "start": start_label_index - text_start_index,
@@ -143,8 +152,9 @@ class EvalCollatorContrastiveCrossEncoder:
                         if start_label_index > end_label_index:
                             continue
 
-                        start_label_index += 1
-                        end_label_index += 1
+                        start_labels[self.label2id[label["label"]], start_label_index - text_start_index] = 1
+                        end_labels[self.label2id[label["label"]], end_label_index - text_start_index] = 1
+                        span_labels[self.label2id[label["label"]], span_lookup[(start_label_index - text_start_index, end_label_index - text_start_index)]] = 1
 
                         annotation.append({
                             "start": start_label_index - text_start_index,
@@ -153,15 +163,36 @@ class EvalCollatorContrastiveCrossEncoder:
                         })
 
             annotations["ner"].append(annotation)
+            annotations["start_labels"].append(start_labels)
+            annotations["end_labels"].append(end_labels)
+            annotations["span_labels"].append(span_labels)
+            annotations["valid_start_mask"].append(valid_start_mask)
+            annotations["valid_end_mask"].append(valid_end_mask)
+            annotations["valid_span_mask"].append(valid_span_mask)
             annotations["span_subword_indices"].append(span_subword_indices)
             annotations["span_lengths"].append(span_lengths)
-            annotations["valid_span_mask"].append(valid_span_mask)
 
-        annotations["span_subword_indices"] = torch.stack(annotations["span_subword_indices"], dim=0)
-        annotations["span_lengths"] = torch.stack(annotations["span_lengths"], dim=0)
-        annotations["valid_span_mask"] = torch.stack(annotations["valid_span_mask"], dim=0)
+        try:
+            annotations["start_labels"] = torch.stack(annotations["start_labels"], dim=0)
+            annotations["end_labels"] = torch.stack(annotations["end_labels"], dim=0)
+            annotations["span_labels"] = torch.stack(annotations["span_labels"], dim=0)
+            annotations["valid_start_mask"] = torch.stack(annotations["valid_start_mask"], dim=0)
+            annotations["valid_end_mask"] = torch.stack(annotations["valid_end_mask"], dim=0)
+            annotations["valid_span_mask"] = torch.stack(annotations["valid_span_mask"], dim=0)
+            annotations["span_subword_indices"] = torch.stack(annotations["span_subword_indices"], dim=0)
+            annotations["span_lengths"] = torch.stack(annotations["span_lengths"], dim=0)
+        except Exception as e:
+            print(f"\n[COLLATOR STACK ERROR] {e}")
+            for key in ("start_labels", "end_labels", "span_labels",
+                        "valid_start_mask", "valid_end_mask", "valid_span_mask",
+                        "span_subword_indices", "span_lengths"):
+                shapes = [t.shape for t in annotations[key]]
+                if len(set(shapes)) > 1:
+                    print(f"  {key}: MISMATCHED shapes {shapes}")
+                else:
+                    print(f"  {key}: shapes {shapes}")
+            return {}
         annotations["label_token_subword_positions"] = label_token_subword_positions
-        annotations["threshold_token_subword_position"] = threshold_token_subword_position
         annotations["text_start_index"] = text_start_index
 
         token_encoder_inputs = {
