@@ -14,8 +14,9 @@ Both expose :meth:`predict`, which takes raw strings plus a list of entity types
 and returns character-level spans.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Union
+from typing import Optional, Union
 
 import numpy as np
 import torch
@@ -24,18 +25,19 @@ from torch import nn
 from transformers import AutoConfig, AutoModel, AutoTokenizer, PreTrainedModel
 from transformers.utils import ModelOutput
 
-from .configuration_otter import (OtterBiEncoderConfig,
-                                  OtterCrossEncoderConfig, OtterConfig)
+from .configuration_otter import OtterBiEncoderConfig, OtterConfig, OtterCrossEncoderConfig
 from .loss import BCELoss, DiceFocalLoss, DiceLoss, FocalLoss
-from .masks import (compressed_all_spans_mask,
-                    compressed_all_spans_mask_cross_encoder,
-                    first_text_token_index)
+from .masks import (
+    compressed_all_spans_mask,
+    compressed_all_spans_mask_cross_encoder,
+    first_text_token_index,
+)
 from .metrics import compute_span_predictions
 
 
 @dataclass
 class SpanModelOutput(ModelOutput):
-    loss: Optional[torch.FloatTensor] = None
+    loss: torch.FloatTensor | None = None
     start_logits: torch.FloatTensor = None
     end_logits: torch.FloatTensor = None
     span_logits: torch.FloatTensor = None
@@ -86,16 +88,22 @@ def _weighted_span_loss(model, start_scores, end_scores, span_scores, labels):
         return torch.tensor(value, device=scores.device, dtype=scores.dtype)
 
     start_loss = model.loss_fn(
-        start_scores, labels["start_labels"],
-        mask=labels["valid_start_mask"], pos_weight=_pos_weight("bce_start_pos_weight", start_scores),
+        start_scores,
+        labels["start_labels"],
+        mask=labels["valid_start_mask"],
+        pos_weight=_pos_weight("bce_start_pos_weight", start_scores),
     )
     end_loss = model.loss_fn(
-        end_scores, labels["end_labels"],
-        mask=labels["valid_end_mask"], pos_weight=_pos_weight("bce_end_pos_weight", end_scores),
+        end_scores,
+        labels["end_labels"],
+        mask=labels["valid_end_mask"],
+        pos_weight=_pos_weight("bce_end_pos_weight", end_scores),
     )
     span_loss = model.loss_fn(
-        span_scores, labels["span_labels"],
-        mask=labels["valid_span_mask"], pos_weight=_pos_weight("bce_span_pos_weight", span_scores),
+        span_scores,
+        labels["span_labels"],
+        mask=labels["valid_span_mask"],
+        pos_weight=_pos_weight("bce_span_pos_weight", span_scores),
     )
     return (
         config.start_loss_weight * start_loss
@@ -154,12 +162,12 @@ class OtterPreTrainedModel(PreTrainedModel):
 
     def predict(
         self,
-        texts: Union[str, Sequence[str]],
+        texts: str | Sequence[str],
         labels: Sequence[str],
-        threshold: Optional[float] = None,
+        threshold: float | None = None,
         batch_size: int = 8,
-        max_seq_length: Optional[int] = None,
-    ) -> List[List[dict]]:
+        max_seq_length: int | None = None,
+    ) -> list[list[dict]]:
         """Extract entities of the given types from raw text.
 
         Args:
@@ -194,12 +202,12 @@ class OtterPreTrainedModel(PreTrainedModel):
 
         # Blank inputs have no text tokens to build spans over, so they never reach the
         # model; they still get an (empty) result so the output lines up with the input.
-        results: List[List[dict]] = [[] for _ in texts]
+        results: list[list[dict]] = [[] for _ in texts]
         todo = [i for i, text in enumerate(texts) if text.strip()]
         try:
             with torch.no_grad():
                 for start in range(0, len(todo), batch_size):
-                    indices = todo[start:start + batch_size]
+                    indices = todo[start : start + batch_size]
                     predicted = self._predict_batch(
                         [texts[i] for i in indices], labels, threshold, max_seq_length
                     )
@@ -226,15 +234,23 @@ class OtterBiEncoderModel(OtterPreTrainedModel):
         self.dropout = nn.Dropout(config.dropout)
         self.linear_hidden_size = config.linear_hidden_size
 
-        self.type_linear = mlp(self.type_config.hidden_size, config.linear_hidden_size, config.dropout)
-        self.token_start_linear = mlp(self.token_config.hidden_size, config.linear_hidden_size, config.dropout)
-        self.token_end_linear = mlp(self.token_config.hidden_size, config.linear_hidden_size, config.dropout)
+        self.type_linear = mlp(
+            self.type_config.hidden_size, config.linear_hidden_size, config.dropout
+        )
+        self.token_start_linear = mlp(
+            self.token_config.hidden_size, config.linear_hidden_size, config.dropout
+        )
+        self.token_end_linear = mlp(
+            self.token_config.hidden_size, config.linear_hidden_size, config.dropout
+        )
         self.token_span_linear = mlp(
             config.linear_hidden_size * 2 + config.span_width_embedding_size,
             config.linear_hidden_size,
             config.dropout,
         )
-        self.fusion_linear = mlp(config.linear_hidden_size * 2, config.linear_hidden_size, config.dropout)
+        self.fusion_linear = mlp(
+            config.linear_hidden_size * 2, config.linear_hidden_size, config.dropout
+        )
         self.width_embedding = nn.Embedding(
             config.max_span_length + 1, config.span_width_embedding_size, padding_idx=0
         )
@@ -253,7 +269,12 @@ class OtterBiEncoderModel(OtterPreTrainedModel):
         self.token_encoder.gradient_checkpointing_enable(**kwargs)
         self.type_encoder.gradient_checkpointing_enable(**kwargs)
 
-    def forward(self, token_encoder_inputs: dict = None, type_encoder_inputs: dict = None, labels: dict = None):
+    def forward(
+        self,
+        token_encoder_inputs: dict = None,
+        type_encoder_inputs: dict = None,
+        labels: dict = None,
+    ):
         token_output = self.token_encoder(**token_encoder_inputs).last_hidden_state
         type_embeds = self.type_encoder(**type_encoder_inputs).last_hidden_state
 
@@ -261,18 +282,26 @@ class OtterBiEncoderModel(OtterPreTrainedModel):
             attention_mask = type_encoder_inputs.get("attention_mask")
             if attention_mask is not None:
                 expanded = attention_mask.unsqueeze(-1).expand(type_embeds.size()).float()
-                type_output = torch.sum(type_embeds * expanded, dim=1) / torch.clamp(expanded.sum(dim=1), min=1e-9)
+                type_output = torch.sum(type_embeds * expanded, dim=1) / torch.clamp(
+                    expanded.sum(dim=1), min=1e-9
+                )
             else:
                 type_output = type_embeds.mean(dim=1)
         else:
             type_output = type_embeds[:, 0, :]
 
-        token_start_output = F.normalize(self.dropout(self.token_start_linear(token_output)), dim=-1)
+        token_start_output = F.normalize(
+            self.dropout(self.token_start_linear(token_output)), dim=-1
+        )
         token_end_output = F.normalize(self.dropout(self.token_end_linear(token_output)), dim=-1)
         type_output = F.normalize(self.dropout(self.type_linear(type_output)), dim=-1)
 
-        start_scores = self.start_logit_scale.exp() * torch.einsum("BSH,CH->BCS", token_start_output, type_output)
-        end_scores = self.end_logit_scale.exp() * torch.einsum("BSH,CH->BCS", token_end_output, type_output)
+        start_scores = self.start_logit_scale.exp() * torch.einsum(
+            "BSH,CH->BCS", token_start_output, type_output
+        )
+        end_scores = self.end_logit_scale.exp() * torch.einsum(
+            "BSH,CH->BCS", token_end_output, type_output
+        )
 
         span_hidden = torch.cat(
             [
@@ -283,19 +312,25 @@ class OtterBiEncoderModel(OtterPreTrainedModel):
             dim=2,
         )
         token_span_output = F.normalize(self.dropout(self.token_span_linear(span_hidden)), dim=-1)
-        span_scores = self.span_logit_scale.exp() * torch.einsum("BSH,CH->BCS", token_span_output, type_output)
+        span_scores = self.span_logit_scale.exp() * torch.einsum(
+            "BSH,CH->BCS", token_span_output, type_output
+        )
 
         loss = None
         if labels is not None and self.training:
             loss = _weighted_span_loss(self, start_scores, end_scores, span_scores, labels)
-        return SpanModelOutput(loss=loss, start_logits=start_scores, end_logits=end_scores, span_logits=span_scores)
+        return SpanModelOutput(
+            loss=loss, start_logits=start_scores, end_logits=end_scores, span_logits=span_scores
+        )
 
     # -- inference --------------------------------------------------------
 
     @property
     def token_tokenizer(self):
         if self._token_tokenizer is None:
-            self._token_tokenizer = _load_tokenizer(self, "token_tokenizer", self.config.token_encoder)
+            self._token_tokenizer = _load_tokenizer(
+                self, "token_tokenizer", self.config.token_encoder
+            )
         return self._token_tokenizer
 
     @property
@@ -306,7 +341,9 @@ class OtterBiEncoderModel(OtterPreTrainedModel):
 
     def encode_labels(self, labels: Sequence[str]) -> dict:
         """Tokenize entity type names once so they can be reused across batches."""
-        encoding = self.type_tokenizer(list(labels), padding=True, truncation=True, return_tensors="pt")
+        encoding = self.type_tokenizer(
+            list(labels), padding=True, truncation=True, return_tensors="pt"
+        )
         return {k: v.to(self.device) for k, v in encoding.items()}
 
     def _predict_batch(self, texts, labels, threshold, max_seq_length):
@@ -342,8 +379,15 @@ class OtterBiEncoderModel(OtterPreTrainedModel):
             labels=model_labels,
         )
         return _decode(
-            self, output, model_labels, texts, offset_mapping, labels, threshold,
-            token_offset=0, char_shift=0,
+            self,
+            output,
+            model_labels,
+            texts,
+            offset_mapping,
+            labels,
+            threshold,
+            token_offset=0,
+            char_shift=0,
         )
 
 
@@ -360,9 +404,15 @@ class OtterCrossEncoderModel(OtterPreTrainedModel):
         self.dropout = nn.Dropout(config.dropout)
         self.linear_hidden_size = config.linear_hidden_size
 
-        self.type_linear = mlp(self.token_config.hidden_size, config.linear_hidden_size, config.dropout)
-        self.token_start_linear = mlp(self.token_config.hidden_size, config.linear_hidden_size, config.dropout)
-        self.token_end_linear = mlp(self.token_config.hidden_size, config.linear_hidden_size, config.dropout)
+        self.type_linear = mlp(
+            self.token_config.hidden_size, config.linear_hidden_size, config.dropout
+        )
+        self.token_start_linear = mlp(
+            self.token_config.hidden_size, config.linear_hidden_size, config.dropout
+        )
+        self.token_end_linear = mlp(
+            self.token_config.hidden_size, config.linear_hidden_size, config.dropout
+        )
         self.token_span_linear = mlp(
             config.linear_hidden_size * 2 + config.span_width_embedding_size,
             config.linear_hidden_size,
@@ -385,15 +435,21 @@ class OtterCrossEncoderModel(OtterPreTrainedModel):
 
     def forward(self, token_encoder_inputs: dict = None, labels: dict = None, **kwargs):
         encoder_outputs = self.token_encoder(**token_encoder_inputs).last_hidden_state
-        token_hidden = encoder_outputs[:, labels["text_start_index"]:, :]
+        token_hidden = encoder_outputs[:, labels["text_start_index"] :, :]
         type_hidden = encoder_outputs[:, labels["label_token_subword_positions"], :]
 
-        token_start_output = F.normalize(self.dropout(self.token_start_linear(token_hidden)), dim=-1)
+        token_start_output = F.normalize(
+            self.dropout(self.token_start_linear(token_hidden)), dim=-1
+        )
         token_end_output = F.normalize(self.dropout(self.token_end_linear(token_hidden)), dim=-1)
         type_output = F.normalize(self.dropout(self.type_linear(type_hidden)), dim=-1)
 
-        start_scores = self.start_logit_scale.exp() * torch.einsum("BSH,BCH->BCS", token_start_output, type_output)
-        end_scores = self.end_logit_scale.exp() * torch.einsum("BSH,BCH->BCS", token_end_output, type_output)
+        start_scores = self.start_logit_scale.exp() * torch.einsum(
+            "BSH,BCH->BCS", token_start_output, type_output
+        )
+        end_scores = self.end_logit_scale.exp() * torch.einsum(
+            "BSH,BCH->BCS", token_end_output, type_output
+        )
 
         span_hidden = torch.cat(
             [
@@ -404,12 +460,16 @@ class OtterCrossEncoderModel(OtterPreTrainedModel):
             dim=2,
         )
         token_span_output = F.normalize(self.dropout(self.token_span_linear(span_hidden)), dim=-1)
-        span_scores = self.span_logit_scale.exp() * torch.einsum("BSH,BCH->BCS", token_span_output, type_output)
+        span_scores = self.span_logit_scale.exp() * torch.einsum(
+            "BSH,BCH->BCS", token_span_output, type_output
+        )
 
         loss = None
         if labels is not None and self.training:
             loss = _weighted_span_loss(self, start_scores, end_scores, span_scores, labels)
-        return SpanModelOutput(loss=loss, start_logits=start_scores, end_logits=end_scores, span_logits=span_scores)
+        return SpanModelOutput(
+            loss=loss, start_logits=start_scores, end_logits=end_scores, span_logits=span_scores
+        )
 
     # -- inference --------------------------------------------------------
 
@@ -440,7 +500,9 @@ class OtterCrossEncoderModel(OtterPreTrainedModel):
 
         label_token_id = self.tokenizer.convert_tokens_to_ids("[LABEL]")
         label_positions = [
-            i for i, token_id in enumerate(encodings["input_ids"][0].tolist()) if token_id == label_token_id
+            i
+            for i, token_id in enumerate(encodings["input_ids"][0].tolist())
+            if token_id == label_token_id
         ]
         if len(label_positions) != len(labels):
             raise ValueError(
@@ -479,8 +541,15 @@ class OtterCrossEncoderModel(OtterPreTrainedModel):
 
         output = self(token_encoder_inputs=token_inputs, labels=model_labels)
         return _decode(
-            self, output, model_labels, texts, offset_mapping, labels, threshold,
-            token_offset=text_start_index, char_shift=label_offset,
+            self,
+            output,
+            model_labels,
+            texts,
+            offset_mapping,
+            labels,
+            threshold,
+            token_offset=text_start_index,
+            char_shift=label_offset,
         )
 
 
@@ -498,13 +567,15 @@ def _load_tokenizer(model, subfolder, fallback):
     return AutoTokenizer.from_pretrained(fallback)
 
 
-def _decode(model, output, model_labels, texts, offset_mapping, labels, threshold, token_offset, char_shift):
+def _decode(
+    model, output, model_labels, texts, offset_mapping, labels, threshold, token_offset, char_shift
+):
     """Turn span logits into character-level entity dicts."""
     predictions = compute_span_predictions(
         span_logits=output.span_logits.detach().float().cpu().numpy(),
         span_mask=model_labels["valid_span_mask"].cpu().numpy(),
         span_mapping=model_labels["span_subword_indices"].cpu().numpy(),
-        id2label={idx: label for idx, label in enumerate(labels)},
+        id2label=dict(enumerate(labels)),
         threshold=threshold,
     )
 
@@ -515,16 +586,20 @@ def _decode(model, output, model_labels, texts, offset_mapping, labels, threshol
         for span in predictions[i]:
             start_token = span["start"] + token_offset
             end_token = span["end"] + token_offset
-            char_start, char_end, surface = model._char_span(text, offsets, start_token, end_token, char_shift)
+            char_start, char_end, surface = model._char_span(
+                text, offsets, start_token, end_token, char_shift
+            )
             if not surface:
                 continue
-            entities.append({
-                "text": surface,
-                "label": span["label"],
-                "start": char_start,
-                "end": char_end,
-                "score": float(span["confidence"]),
-            })
+            entities.append(
+                {
+                    "text": surface,
+                    "label": span["label"],
+                    "start": char_start,
+                    "end": char_end,
+                    "score": float(span["confidence"]),
+                }
+            )
         entities.sort(key=lambda e: (e["start"], e["end"]))
         decoded.append(entities)
     return decoded

@@ -6,10 +6,7 @@ import torch.nn.functional as F
 class BCELoss(nn.Module):
     def forward(self, logits, labels, mask=None, pos_weight=None, **kwargs):
         loss = F.binary_cross_entropy_with_logits(
-            logits, 
-            labels,
-            reduction="none",
-            pos_weight=pos_weight
+            logits, labels, reduction="none", pos_weight=pos_weight
         )
         if mask is not None:
             loss = (loss * mask).mean() * 100
@@ -23,13 +20,17 @@ class FocalLoss(nn.Module):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
-    
+
     def forward(self, logits, labels, mask=None, pos_weight=None, **kwargs):
         if not (0 <= self.alpha <= 1) and self.alpha != -1:
-            raise ValueError(f"Invalid alpha value: {self.alpha}. alpha must be in the range [0,1] or -1 for ignore.")
+            raise ValueError(
+                f"Invalid alpha value: {self.alpha}. alpha must be in the range [0,1] or -1 for ignore."
+            )
 
         p = torch.sigmoid(logits)
-        ce_loss = F.binary_cross_entropy_with_logits(logits, labels, reduction="none", pos_weight=pos_weight)
+        ce_loss = F.binary_cross_entropy_with_logits(
+            logits, labels, reduction="none", pos_weight=pos_weight
+        )
         p_t = p * labels + (1 - p) * (1 - labels)
         loss = ce_loss * ((1 - p_t) ** self.gamma)
 
@@ -46,12 +47,6 @@ class FocalLoss(nn.Module):
 
 
 class DiceLoss(nn.Module):
-    """Dice loss for binary classification, handles severe positive/negative imbalance.
-
-    Uses the smooth Dice formulation: 1 - (2*p*y + smooth) / (p + y + smooth)
-    Applied after sigmoid on logits.
-    """
-
     def __init__(self, smooth: float = 1.0, square_denominator: bool = True):
         super().__init__()
         self.smooth = smooth
@@ -74,14 +69,14 @@ class DiceLoss(nn.Module):
 
 
 class DiceFocalLoss(nn.Module):
-    """Combined Dice + Focal loss for long-tail entity type distributions.
-
-    Focal addresses rare entity types via down-weighting easy negatives;
-    Dice directly optimises the F1-like overlap metric.
-    """
-
-    def __init__(self, alpha: float = 0.5, gamma: float = 1.0, dice_weight: float = 0.5,
-                 focal_weight: float = 0.5, smooth: float = 1.0):
+    def __init__(
+        self,
+        alpha: float = 0.5,
+        gamma: float = 1.0,
+        dice_weight: float = 0.5,
+        focal_weight: float = 0.5,
+        smooth: float = 1.0,
+    ):
         super().__init__()
         self.dice = DiceLoss(smooth=smooth)
         self.focal = FocalLoss(alpha=alpha, gamma=gamma)
@@ -95,17 +90,16 @@ class DiceFocalLoss(nn.Module):
 
 
 class ContrastiveLoss(nn.Module):
-
     def __init__(self, tau: float = 1.0):
         super().__init__()
         self.tau = tau
 
     def forward(
-        self, 
-        scores: torch.tensor, 
-        positions: list[int], 
-        mask: torch.tensor, 
-        prob_mask: torch.tensor = None
+        self,
+        scores: torch.tensor,
+        positions: list[int],
+        mask: torch.tensor,
+        prob_mask: torch.tensor = None,
     ) -> torch.tensor:
         batch_size, seq_length = scores.size(0), scores.size(1)
         scores = scores / self.tau
@@ -123,9 +117,11 @@ class ContrastiveLoss(nn.Module):
             log_probs = log_probs[batch_indices, positions]
         if prob_mask is not None:
             log_probs = log_probs * prob_mask
-        return - log_probs.mean()
+        return -log_probs.mean()
 
-    def masked_log_softmax(self, vector: torch.tensor, mask: torch.tensor, dim: int = -1) -> torch.tensor:
+    def masked_log_softmax(
+        self, vector: torch.tensor, mask: torch.tensor, dim: int = -1
+    ) -> torch.tensor:
         if mask is not None:
             while mask.dim() < vector.dim():
                 mask = mask.unsqueeze(1)

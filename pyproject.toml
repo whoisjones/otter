@@ -3,18 +3,23 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ner-dataset-generation"
+name = "otter"
 version = "0.1.0"
-description = "NER Dataset Generation with Bi-Encoder and Cross-Encoder Models"
+description = "Otter: universal multilingual NER with open entity types"
 readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "MIT"}
-authors = [
-    {name = "Jonas Golde", email = "jonas.golde@gmail.com"}
+license = { text = "MIT" }
+authors = [{ name = "Jonas Golde", email = "jonas.golde@gmail.com" }]
+keywords = [
+    "ner",
+    "named-entity-recognition",
+    "zero-shot",
+    "multilingual",
+    "transformers",
+    "pytorch",
 ]
-keywords = ["ner", "named-entity-recognition", "dataset-generation", "transformers", "pytorch"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -23,33 +28,48 @@ classifiers = [
 ]
 
 dependencies = [
-    "torch",
-    "transformers",
     "accelerate",
     "datasets",
-    "tqdm",
+    "huggingface-hub",
     "numpy",
     "safetensors",
+    "torch",
+    "tqdm",
+    "transformers>=5.0",
 ]
 
+[project.optional-dependencies]
+dev = ["ruff>=0.16"]
+
 [project.urls]
-Homepage = "https://github.com/whoisjones/ner-dataset-generation"
-Repository = "https://github.com/whoisjones/ner-dataset-generation"
-Issues = "https://github.com/whoisjones/ner-dataset-generation/issues"
+Homepage = "https://github.com/whoisjones/otter"
+Repository = "https://github.com/whoisjones/otter"
+Issues = "https://github.com/whoisjones/otter/issues"
 
 [tool.setuptools]
-packages = ["src"]
+packages = ["src", "src.collator", "src.model", "src.hub"]
 
 [tool.setuptools.package-data]
 "*" = ["*.json", "*.jsonl", "*.txt"]
 
-[tool.black]
+[tool.ruff]
 line-length = 100
-target-version = ["py312"]
+target-version = "py312"
 
-[tool.mypy]
-python_version = "3.12"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = false
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    "E501",   # long lines are left to the formatter
+    "B905",   # zip(..., strict=) is not meaningful for the ragged batch zips here
+    "SIM105", # contextlib.suppress hides which call is allowed to fail
+    "SIM108", # explicit if/else reads better than a long ternary
+    "SIM401", # dict.get(...) obscures the "only set when present" intent here
+]
 
+[tool.ruff.lint.per-file-ignores]
+# The Hub templates import their siblings from the staged repo, not from src/.
+"src/hub/modeling_otter.py" = ["F401", "E402"]
+"src/hub/configuration_otter.py" = ["F401"]
+
+[tool.ruff.format]
+quote-style = "double"

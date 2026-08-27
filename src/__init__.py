@@ -1,18 +1,33 @@
-from .model import OtterBiEncoderModel, OtterCrossEncoderModel, OtterContrastiveBiEncoderModel, OtterContrastiveCrossEncoderModel
 from .collator import (
-    TrainCollatorBiEncoder, EvalCollatorBiEncoder, TrainCollatorCrossEncoder, EvalCollatorCrossEncoder, TrainCollatorContrastiveBiEncoder, EvalCollatorContrastiveBiEncoder, TrainCollatorContrastiveCrossEncoder, EvalCollatorContrastiveCrossEncoder
+    EvalCollatorBiEncoder,
+    EvalCollatorContrastiveBiEncoder,
+    EvalCollatorContrastiveCrossEncoder,
+    EvalCollatorCrossEncoder,
+    TrainCollatorBiEncoder,
+    TrainCollatorContrastiveBiEncoder,
+    TrainCollatorContrastiveCrossEncoder,
+    TrainCollatorCrossEncoder,
 )
-from .metrics import compute_span_predictions, add_batch_metrics, finalize_metrics
-from .trainer import train, evaluate
-from .config import SpanModelConfig
+from .config import ARCHITECTURES, SpanModelConfig, is_bi_encoder, is_contrastive
 from .logger import setup_logger
+from .metrics import add_batch_metrics, compute_span_predictions, finalize_metrics
+from .model import (
+    OtterBiEncoderModel,
+    OtterContrastiveBiEncoderModel,
+    OtterContrastiveCrossEncoderModel,
+    OtterCrossEncoderModel,
+)
+from .trainer import evaluate, train
 
 __all__ = [
     "OtterBiEncoderModel",
     "OtterCrossEncoderModel",
     "OtterContrastiveBiEncoderModel",
     "OtterContrastiveCrossEncoderModel",
+    "ARCHITECTURES",
     "SpanModelConfig",
+    "is_bi_encoder",
+    "is_contrastive",
     "TrainCollatorBiEncoder",
     "EvalCollatorBiEncoder",
     "TrainCollatorCrossEncoder",
@@ -28,4 +43,3 @@ __all__ = [
     "evaluate",
     "setup_logger",
 ]
-
