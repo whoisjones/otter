@@ -1,7 +1,22 @@
 from transformers import PretrainedConfig
 
-class SpanModelConfig(PretrainedConfig):
+ARCHITECTURES = (
+    "bi_encoder",
+    "cross_encoder",
+    "contrastive_bi_encoder",
+    "contrastive_cross_encoder",
+)
 
+
+def is_bi_encoder(architecture: str) -> bool:
+    return "bi_encoder" in architecture
+
+
+def is_contrastive(architecture: str) -> bool:
+    return "contrastive" in architecture
+
+
+class SpanModelConfig(PretrainedConfig):
     def __init__(
         self,
         token_encoder: str = None,
@@ -28,7 +43,7 @@ class SpanModelConfig(PretrainedConfig):
         dice_smooth: float = 1.0,
         dice_weight: float = 0.5,
         focal_weight: float = 0.5,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(**kwargs)
         self.token_encoder = token_encoder

@@ -1,47 +1,39 @@
-# 🦦 Otter - Universal Multilingual NER
+# 🦦 Otter — Universal Multilingual NER
 
-## Reproducing Paper Results
+Otter is a span-based named entity recognizer that takes the entity types as *input*.
+Instead of a fixed tag set, you pass the types you care about in plain language —
+`person`, `Fußballverein`, `protein` — and the model returns the matching character
+spans. It works across languages without retraining.
 
-## Input Format
+Four pretrained models are published on the Hugging Face Hub, and this repository
+contains everything needed to train, evaluate and publish them.
 
-Datasets need to be annotated with character offsets, following this naming convention:
+| Model | Architecture | Encoder | Max length |
+|---|---|---|---|
+| [`whoisjones/otter-bi-mmbert`](https://huggingface.co/whoisjones/otter-bi-mmbert) | bi-encoder | mmBERT-base | 1024 |
+| [`whoisjones/otter-cross-mmbert`](https://huggingface.co/whoisjones/otter-cross-mmbert) | cross-encoder | mmBERT-base | 1024 |
+| [`whoisjones/otter-bi-rembert`](https://huggingface.co/whoisjones/otter-bi-rembert) | bi-encoder | RemBERT | 512 |
+| [`whoisjones/otter-cross-rembert`](https://huggingface.co/whoisjones/otter-cross-rembert) | cross-encoder | RemBERT | 512 |
 
-```python
-dataset = DatasetDict({
-    "test": Dataset.from_list([
-        {
-            "text": "John Doe works at OpenAI in San Francisco.",
-            "char_spans": [
-                {"start": 0, "end": 8, "label": "person"},
-                {"start": 18, "end": 24, "label": "organization"},
-                {"start": 28, "end": 41, "label": "location"},
-            ]
-        },
-        {
-            "text": "Alice and Bob visited the Eiffel Tower.",
-            "char_spans": [
-                {"start": 0, "end": 5, "label": "person"},
-                {"start": 10, "end": 13, "label": "person"},
-                {"start": 28, "end": 40, "label": "location"},
-            ]
-        },
-        {
-            "text": "Amazon was founded by Jeff Bezos.",
-            "char_spans": [
-                {"start": 0, "end": 6, "label": "organization"},
-                {"start": 22, "end": 32, "label": "person"},
-            ]
-        }
-    ])
-})
+The **bi-encoder** embeds the text and the type names with two separate encoders and
+matches spans against types in a shared space — the type embeddings can be cached, so
+it stays fast with many types. The **cross-encoder** puts the type names and the text
+through one encoder as `[LABEL] person [LABEL] location [SEP] <text>`, which is more
+accurate but re-encodes the prefix for every input.
+
+## Installation
+
+The project is defined entirely by `pyproject.toml`.
+
+```bash
+uv sync                     # or: uv pip install -e .
+uv pip install -e ".[dev]"  # adds ruff
 ```
 
-You can also use word-segmented inputs and labels using the names `tokens` and `token_spans`.
+## Quickstart
 
-## Usage
-
-The four released models are self-contained: `predict` takes raw strings and a list of
-entity types in plain language, and returns character spans.
+The released models are self-contained: `predict` takes raw strings plus a list of
+entity types and returns character spans.
 
 ```python
 from transformers import AutoModel
@@ -64,77 +56,78 @@ for entity in entities:
 'Berlin'                  location        0.90
 ```
 
-Pass a list of strings to run on a batch; you then get one list of entities per input,
-in the same order.
+Pass a list of strings to run on a batch; you get one list of entities per input, in
+the same order.
 
 ```python
 model = model.to("cuda")
 results = model.predict(texts, labels=["person", "location"], batch_size=16, threshold=0.5)
 ```
 
-`threshold` defaults to `config.prediction_threshold` -- 0.5 for the cross-encoders and
-0.2 for the bi-encoders, from the macro-F1 calibration sweep.
+`threshold` defaults to `config.prediction_threshold` — 0.5 for the cross-encoders and
+0.2 for the bi-encoders, taken from the macro-F1 calibration sweep.
 
-| Model | Architecture | Encoder |
-|---|---|---|
-| [`whoisjones/otter-bi-mmbert`](https://huggingface.co/whoisjones/otter-bi-mmbert) | bi-encoder | mmBERT-base |
-| [`whoisjones/otter-cross-mmbert`](https://huggingface.co/whoisjones/otter-cross-mmbert) | cross-encoder | mmBERT-base |
-| [`whoisjones/otter-bi-rembert`](https://huggingface.co/whoisjones/otter-bi-rembert) | bi-encoder | RemBERT |
-| [`whoisjones/otter-cross-rembert`](https://huggingface.co/whoisjones/otter-cross-rembert) | cross-encoder | RemBERT |
+## Repository layout
 
-### Publishing the models
-
-`scripts/hf_checkpoint_conversion/prepare_hub_repos.py` rebuilds the Hub repositories
-from `scripts/hf_checkpoint_conversion/hub_files/`. It stages the config, the
-`trust_remote_code` modules, the tokenizers and the model card, and leaves the published
-weights untouched.
-
-```bash
-python scripts/hf_checkpoint_conversion/prepare_hub_repos.py --out-dir build/hub
-python scripts/hf_checkpoint_conversion/prepare_hub_repos.py --out-dir build/hub --push
 ```
+train.py            training entry point, one config JSON per run
+evaluate.py         evaluation entry point, architecture inferred from the checkpoint
+publish_to_hub.py   builds and pushes the four Hub repositories
+smoke_test.py       dry-runs every architecture end to end
+configs/            one JSON per architecture
+src/args.py         ModelArguments / DataTrainingArguments / CustomTrainingArguments
+src/config.py       SpanModelConfig, shared by all four architectures
+src/model/          bi-encoder, cross-encoder and their contrastive variants
+src/collator/       span enumeration, masking and label alignment
+src/loss.py         BCE, focal, dice, dice+focal and contrastive losses
+src/metrics.py      span decoding and micro/macro P/R/F1
+src/trainer.py      training and evaluation loops
+src/hub/            sources for the published `trust_remote_code` model repositories
+```
+
+## Data format
+
+Datasets are JSONL, annotated with character offsets:
+
+```python
+{
+    "text": "John Doe works at OpenAI in San Francisco.",
+    "char_spans": [
+        {"start": 0, "end": 8, "label": "person"},
+        {"start": 18, "end": 24, "label": "organization"},
+        {"start": 28, "end": 41, "label": "location"},
+    ],
+}
+```
+
+Word-segmented input works too, under the keys `tokens` and `token_spans`, where the
+offsets index words rather than characters. Which of the two is used is decided by
+`annotation_format` (`text` or `tokens`) in the config.
 
 ## Training
 
-All training is launched through the single entry point `train.py`. The
-architecture is selected via the `architecture` field of the config JSON
-(`bi_encoder`, `cross_encoder`, `contrastive_bi_encoder`, or
-`contrastive_cross_encoder`).
+All training goes through `train.py`, with the architecture selected by the
+`architecture` field of the config JSON.
 
-### Bi-Encoder Models
-
-**BCE Loss:**
 ```bash
 accelerate launch train.py configs/bi_encoder.json
-```
-
-**Contrastive Loss:**
-```bash
 accelerate launch train.py configs/bi_encoder_contrastive.json
-```
-
-### Cross-Encoder Models
-
-**BCE Loss:**
-```bash
 accelerate launch train.py configs/cross_encoder.json
-```
-
-**Contrastive Loss:**
-```bash
 accelerate launch train.py configs/cross_encoder_contrastive.json
 ```
 
-### Customizing Training Data
+The BCE configs use `loss_fn: "bce"`; the contrastive configs pair the
+`contrastive_*` architectures with `loss_fn: "contrastive"`.
 
-To use multiple training files (e.g., all finerweb files), first download the dataset from the hub:
+Training data is pointed at by `train_file`, which accepts glob patterns:
+
 ```python
 from datasets import load_dataset
-dataset = load_dataset('whoisjones/finerweb', "eng", split='train')
-dataset.to_json('data/finerweb/train.jsonl')
+
+dataset = load_dataset("whoisjones/finerweb", "eng", split="train")
+dataset.to_json("data/finerweb/eng.jsonl")
 ```
 
-Then modify the config:
 ```json
 {
   "train_file": "data/finerweb/*.jsonl",
@@ -143,14 +136,13 @@ Then modify the config:
 }
 ```
 
-The `train_file` field supports glob patterns, so `*.jsonl` will match all JSONL files in the directory.
-
-To change the test dataset, simply update the `test_file` path in the config to point to your desired evaluation dataset.
+Checkpoints land in `output_dir`; the best one by validation F1 is symlinked as
+`best_checkpoint`. A run whose `best_checkpoint` already exists exits immediately, so
+re-launching a finished job is a no-op.
 
 ## Evaluation
 
-All evaluation is launched through the single entry point `evaluate.py`. The
-architecture is inferred from the checkpoint's config.
+`evaluate.py` infers the architecture from the checkpoint config.
 
 ```bash
 python evaluate.py \
@@ -160,20 +152,41 @@ python evaluate.py \
   --evaluation_format tokens
 ```
 
-### Evaluation Dataset Formats
+- `--evaluation_dataset` takes a `.jsonl` file, a directory holding a saved
+  `DatasetDict`, or a Hub dataset name (every config is then evaluated in turn). The
+  `test` split is used, falling back to `dev`.
+- `--evaluation_format` picks `char_spans` (`text`) or `token_spans` (`tokens`).
+- `--threshold` is a float for the BCE models, or `cls` / `label_token` for the
+  contrastive ones. Omit it to use the checkpoint's own `prediction_threshold`.
+- `--max_eval_samples` caps the split size (default 1000, sampled with seed 42).
 
-The `--evaluation_dataset` argument accepts:
-- **JSONL files**: Path to a `.jsonl` file (e.g., `data/conll2003/test.jsonl`)
-- **HuggingFace DatasetDict**: Path to a directory containing a saved DatasetDict (e.g., `data/eval_data/panx/en`)
+Results are written to `evals/eval_<timestamp>.json` alongside VRAM, latency and FLOP
+measurements.
 
-The script automatically detects the format and loads the appropriate split (`test` or `dev`).
+## Publishing to the Hub
 
-### Evaluation Format
+`publish_to_hub.py` rebuilds the four model repositories. It stages the config, the
+`trust_remote_code` modules from `src/hub/`, the tokenizers and the model card, and
+generates `masks.py`, `loss.py`, `metrics.py` and `collate_fn.py` from `src/` so the
+published copies cannot drift from this repository. Published weights are never
+touched.
 
-- `--evaluation_format text`: Uses character-level spans (`char_spans`) from the dataset
-- `--evaluation_format tokens`: Uses token-level spans (`token_spans`) from the dataset
+```bash
+python publish_to_hub.py --out-dir build/hub            # stage only
+python publish_to_hub.py --out-dir build/hub --example  # also run the model-card example
+python publish_to_hub.py --out-dir build/hub --example --push
+```
 
-### Threshold
+## Development
 
-- For **BCE models**: Pass a float value (e.g., `0.5`)
-- For **Contrastive models**: Pass either `"cls"` or `"label_token"` as a string
+```bash
+ruff format .        # formatting
+ruff check .         # linting
+python smoke_test.py # config loading plus a dry run of all four architectures
+```
+
+The smoke test builds a two-layer BERT locally, so it needs no GPU and no checkpoint.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

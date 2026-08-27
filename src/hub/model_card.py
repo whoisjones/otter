@@ -1,5 +1,3 @@
-"""Model card for the published Otter checkpoints."""
-
 ARCH_BLURB = {
     "bi_encoder": (
         "**Bi-encoder.** The text and the entity type names are encoded separately, and "
@@ -56,7 +54,7 @@ def render(name, spec, threshold, example_output=None):
         f"- Label encoder: [`{spec['type_encoder']}`](https://huggingface.co/{spec['type_encoder']})\n"
         if architecture == "bi_encoder"
         else f"- Encoder: [`{spec['token_encoder']}`](https://huggingface.co/{spec['token_encoder']}) "
-             "(vocabulary extended with a `[LABEL]` token)\n"
+        "(vocabulary extended with a `[LABEL]` token)\n"
     )
 
     if example_output:
@@ -87,7 +85,7 @@ label set and no fine-tuning step: the types are part of the input.
 
 {ARCH_BLURB[architecture]}
 
-{encoders}- Max sequence length: {spec['max_seq_length']} tokens
+{encoders}- Max sequence length: {spec["max_seq_length"]} tokens
 - Max span length: 30 tokens
 
 ## Usage

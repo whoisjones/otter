@@ -1,12 +1,13 @@
+import shutil
 import time
+from collections import defaultdict
+from pathlib import Path
+
 import torch
 from tqdm import tqdm
-from pathlib import Path
-from collections import defaultdict
 
-import shutil
-from .metrics import compute_span_predictions, add_batch_metrics, finalize_metrics
 from .logger import setup_logger
+from .metrics import add_batch_metrics, compute_span_predictions, finalize_metrics
 
 
 def cycle(iterable):
@@ -17,8 +18,8 @@ def cycle(iterable):
         except StopIteration:
             iterator = iter(iterable)
 
+
 def evaluate(model, dataloader, accelerator, track_benchmark=False):
-    """Evaluate the model on a dataset. When track_benchmark=True, adds VRAM, latency, FLOPs to metrics["benchmark"]."""
     model.eval()
     unwrapped_model = accelerator.unwrap_model(model)
 
@@ -26,49 +27,63 @@ def evaluate(model, dataloader, accelerator, track_benchmark=False):
     num_batches = 0
     total_examples = 0
     batch_times_sec = []
-    
+
     metrics_by_type = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
-    
+
     # Reset CUDA memory stats for accurate peak measurement
     if track_benchmark and torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
         torch.cuda.synchronize()
-    
+
     first_batch_for_flops = None
-    
+
     with torch.no_grad():
-        pbar = tqdm(total=len(dataloader), desc="Evaluating", disable=not accelerator.is_local_main_process)
+        pbar = tqdm(
+            total=len(dataloader), desc="Evaluating", disable=not accelerator.is_local_main_process
+        )
         for batch_idx, batch in enumerate(dataloader):
             if not batch:
                 continue
 
             if track_benchmark and first_batch_for_flops is None:
                 first_batch_for_flops = {
-                    "token_encoder_inputs": {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in batch["token_encoder_inputs"].items()},
-                    "labels": {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in batch["labels"].items()},
+                    "token_encoder_inputs": {
+                        k: v.clone() if isinstance(v, torch.Tensor) else v
+                        for k, v in batch["token_encoder_inputs"].items()
+                    },
+                    "labels": {
+                        k: v.clone() if isinstance(v, torch.Tensor) else v
+                        for k, v in batch["labels"].items()
+                    },
                     "id2label": batch["id2label"],
                 }
                 if batch.get("type_encoder_inputs"):
-                    first_batch_for_flops["type_encoder_inputs"] = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in batch["type_encoder_inputs"].items()}
+                    first_batch_for_flops["type_encoder_inputs"] = {
+                        k: v.clone() if isinstance(v, torch.Tensor) else v
+                        for k, v in batch["type_encoder_inputs"].items()
+                    }
 
             # Time the forward pass (GPU-synchronized when available for accuracy)
             if track_benchmark:
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
                 t0 = time.perf_counter()
-            
+
             try:
                 output = model(
                     token_encoder_inputs=batch["token_encoder_inputs"],
-                    type_encoder_inputs=batch["type_encoder_inputs"] if "type_encoder_inputs" in batch else None,
-                    labels=batch["labels"]
+                    type_encoder_inputs=batch["type_encoder_inputs"]
+                    if "type_encoder_inputs" in batch
+                    else None,
+                    labels=batch["labels"],
                 )
-            except Exception as e:
+            except Exception:
                 import traceback
+
                 print(f"\n[EVAL ERROR] batch_idx={batch_idx}")
                 print(f"  input_ids shape : {batch['token_encoder_inputs']['input_ids'].shape}")
                 for k, v in batch["labels"].items():
-                    if hasattr(v, 'shape'):
+                    if hasattr(v, "shape"):
                         print(f"  labels[{k}] shape: {v.shape}")
                     elif isinstance(v, list):
                         print(f"  labels[{k}] len  : {len(v)}")
@@ -80,8 +95,8 @@ def evaluate(model, dataloader, accelerator, track_benchmark=False):
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
                 batch_times_sec.append(time.perf_counter() - t0)
-            
-            batch_size = len(batch['labels']['ner'])
+
+            batch_size = len(batch["labels"]["ner"])
             total_examples += batch_size
 
             if "loss" in output:
@@ -89,16 +104,16 @@ def evaluate(model, dataloader, accelerator, track_benchmark=False):
                 total_loss += loss.detach().item()
                 num_batches += 1
 
-            golds = batch['labels']['ner']
+            golds = batch["labels"]["ner"]
             predictions = compute_span_predictions(
                 span_logits=output.span_logits.cpu().numpy(),
                 span_mask=batch["labels"]["valid_span_mask"].cpu().numpy(),
                 span_mapping=batch["labels"]["span_subword_indices"].cpu().numpy(),
                 id2label=batch["id2label"],
-                threshold=unwrapped_model.config.prediction_threshold
+                threshold=unwrapped_model.config.prediction_threshold,
             )
             add_batch_metrics(golds, predictions, metrics_by_type)
-            
+
             pbar.update(1)
         pbar.close()
 
@@ -113,7 +128,7 @@ def evaluate(model, dataloader, accelerator, track_benchmark=False):
     if track_benchmark and accelerator.is_local_main_process:
         benchmark = {}
         if torch.cuda.is_available():
-            benchmark["cuda_memory_allocated_mb"] = torch.cuda.max_memory_allocated() / (1024 ** 2)
+            benchmark["cuda_memory_allocated_mb"] = torch.cuda.max_memory_allocated() / (1024**2)
         if batch_times_sec and total_examples > 0:
             benchmark["latency_ms_per_example"] = (sum(batch_times_sec) / total_examples) * 1000
         # FLOPs
@@ -129,61 +144,74 @@ def evaluate(model, dataloader, accelerator, track_benchmark=False):
                     _ = model(
                         token_encoder_inputs=first_batch_for_flops["token_encoder_inputs"],
                         type_encoder_inputs=first_batch_for_flops.get("type_encoder_inputs"),
-                        labels=first_batch_for_flops["labels"]
+                        labels=first_batch_for_flops["labels"],
                     )
                 total_flops = 0
                 for event in prof.key_averages():
-                    if hasattr(event, 'flops') and event.flops is not None:
+                    if hasattr(event, "flops") and event.flops is not None:
                         total_flops += event.flops
                 benchmark["flops_per_forward"] = total_flops
             except Exception:
                 benchmark["flops_per_forward"] = None  # Profiler may fail on some setups
-        
+
         metrics["benchmark"] = benchmark
 
     torch.cuda.empty_cache()
-    
+
     return metrics
 
 
-def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accelerator, args, tokenizer=None):
+def train(
+    model,
+    train_dataloader,
+    eval_dataloader,
+    optimizer,
+    scheduler,
+    accelerator,
+    args,
+    tokenizer=None,
+):
     logger = setup_logger(args.output_dir, is_main_process=accelerator.is_main_process)
     model.train()
     total_loss = 0.0
     num_batches = 0
     global_step = 0
     best_f1 = 0.0
-    
-    save_total_limit = getattr(args, 'save_total_limit', 2)
+
+    save_total_limit = getattr(args, "save_total_limit", 2)
     best_models = []
     best_checkpoint_path = None
-    
+
     patience = args.early_stopping_patience
     patience_counter = 0
-    
+
     train_iterator = cycle(train_dataloader)
-    
+
     steps_per_epoch = len(train_dataloader)
-    logging_steps = getattr(args, 'logging_steps', 10)
-    
-    progress_bar = tqdm(total=args.max_steps, desc="Training", disable=not accelerator.is_local_main_process)
-    
+    logging_steps = getattr(args, "logging_steps", 10)
+
+    progress_bar = tqdm(
+        total=args.max_steps, desc="Training", disable=not accelerator.is_local_main_process
+    )
+
     while global_step < args.max_steps:
         batch = next(train_iterator)
         if not batch:
             continue
-        
+
         optimizer.zero_grad()
-        
+
         output = model(
             token_encoder_inputs=batch["token_encoder_inputs"],
-            type_encoder_inputs=batch["type_encoder_inputs"] if "type_encoder_inputs" in batch else None,
-            labels=batch["labels"]
+            type_encoder_inputs=batch["type_encoder_inputs"]
+            if "type_encoder_inputs" in batch
+            else None,
+            labels=batch["labels"],
         )
         loss = output.loss
 
         accelerator.backward(loss)
-        
+
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
         optimizer.step()
         scheduler.step()
@@ -193,31 +221,37 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
         num_batches += 1
         global_step += 1
 
-        if hasattr(scheduler, 'get_last_lr'):
-            lr = scheduler.get_last_lr()[0] if isinstance(scheduler.get_last_lr(), list) else scheduler.get_last_lr()
+        if hasattr(scheduler, "get_last_lr"):
+            lr = (
+                scheduler.get_last_lr()[0]
+                if isinstance(scheduler.get_last_lr(), list)
+                else scheduler.get_last_lr()
+            )
         else:
-            lr = optimizer.param_groups[0]['lr']
-        
+            lr = optimizer.param_groups[0]["lr"]
+
         epoch = global_step / steps_per_epoch if steps_per_epoch > 0 else 0.0
-        
+
         if global_step % logging_steps == 0 and accelerator.is_main_process:
             avg_loss = total_loss / num_batches
             metrics = {
-                'loss': round(avg_loss, 4),
-                'grad_norm': round(grad_norm.item(), 4) if isinstance(grad_norm, torch.Tensor) else round(grad_norm, 4),
-                'learning_rate': '{:.2e}'.format(lr),
-                'epoch': round(epoch, 2)
+                "loss": round(avg_loss, 4),
+                "grad_norm": round(grad_norm.item(), 4)
+                if isinstance(grad_norm, torch.Tensor)
+                else round(grad_norm, 4),
+                "learning_rate": f"{lr:.2e}",
+                "epoch": round(epoch, 2),
             }
             progress_bar.write(str(metrics))
-        
+
         progress_bar.update(1)
-        
+
         if global_step % args.eval_steps == 0:
             if accelerator.is_main_process:
-                logger.info(f"\n{'='*50}")
+                logger.info(f"\n{'=' * 50}")
                 logger.info(f"Step {global_step}/{args.max_steps}")
-                logger.info(f"Training Loss: {total_loss/num_batches:.4f}")
-            
+                logger.info(f"Training Loss: {total_loss / num_batches:.4f}")
+
             if eval_dataloader is not None:
                 eval_metrics = evaluate(model, eval_dataloader, accelerator)
                 if accelerator.is_main_process:
@@ -225,7 +259,7 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
                     logger.info(f"Precision: {eval_metrics['micro']['precision']:.4f}")
                     logger.info(f"Recall: {eval_metrics['micro']['recall']:.4f}")
                     logger.info(f"F1 Score: {eval_metrics['micro']['f1']:.4f}")
-            
+
             checkpoint_dir = Path(args.output_dir) / f"checkpoint-{global_step}"
             if accelerator.is_main_process:
                 unwrapped_model = accelerator.unwrap_model(model)
@@ -233,12 +267,12 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
                 if tokenizer is not None:
                     tokenizer.save_pretrained(checkpoint_dir / "tokenizer")
                 logger.info(f"Saved checkpoint to {checkpoint_dir}")
-            
+
             # Synchronize all processes after checkpoint save to ensure it's fully written
             accelerator.wait_for_everyone()
-            
+
             if eval_dataloader is not None:
-                current_f1 = eval_metrics['micro']['f1']
+                current_f1 = eval_metrics["micro"]["f1"]
                 if current_f1 > best_f1:
                     best_f1 = current_f1
                     best_checkpoint_path = checkpoint_dir
@@ -262,27 +296,29 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
 
                 if patience_counter >= patience:
                     if accelerator.is_main_process:
-                        logger.info(f"Early stopping triggered after {patience} evaluations without improvement.")
+                        logger.info(
+                            f"Early stopping triggered after {patience} evaluations without improvement."
+                        )
                         logger.info(f"Best F1 score: {best_f1:.4f}")
                     break
             else:
                 best_checkpoint_path = checkpoint_dir
-            
+
             total_loss = 0.0
             num_batches = 0
             model.train()
-    
+
     progress_bar.close()
-    
+
     # Ensure all processes finish before creating symlink
     accelerator.wait_for_everyone()
-    
+
     if best_checkpoint_path is not None and accelerator.is_main_process:
         best_checkpoint_link = Path(args.output_dir) / "best_checkpoint"
         # Resolve paths to ensure correct relative path calculation
         output_dir_resolved = Path(args.output_dir).resolve()
         best_checkpoint_path_resolved = Path(best_checkpoint_path).resolve()
-        
+
         if best_checkpoint_link.exists():
             if best_checkpoint_link.is_symlink():
                 best_checkpoint_link.unlink()
@@ -290,19 +326,24 @@ def train(model, train_dataloader, eval_dataloader, optimizer, scheduler, accele
                 shutil.rmtree(best_checkpoint_link)
             else:
                 best_checkpoint_link.unlink()
-        
+
         # Create symlink using resolved relative path
         try:
             relative_path = best_checkpoint_path_resolved.relative_to(output_dir_resolved)
             best_checkpoint_link.symlink_to(relative_path)
-            logger.info(f"Best checkpoint (F1={best_f1:.4f}) saved at: {best_checkpoint_path_resolved}")
+            logger.info(
+                f"Best checkpoint (F1={best_f1:.4f}) saved at: {best_checkpoint_path_resolved}"
+            )
             logger.info(f"Symlink created: {best_checkpoint_link} -> {relative_path}")
         except ValueError as e:
-            logger.error(f"Failed to create symlink: {e}. Best checkpoint path: {best_checkpoint_path_resolved}, Output dir: {output_dir_resolved}")
+            logger.error(
+                f"Failed to create symlink: {e}. Best checkpoint path: {best_checkpoint_path_resolved}, Output dir: {output_dir_resolved}"
+            )
             # Fallback: copy the checkpoint directory
             if best_checkpoint_path_resolved.exists():
-                shutil.copytree(best_checkpoint_path_resolved, best_checkpoint_link, dirs_exist_ok=True)
+                shutil.copytree(
+                    best_checkpoint_path_resolved, best_checkpoint_link, dirs_exist_ok=True
+                )
                 logger.info(f"Copied best checkpoint to {best_checkpoint_link} as fallback")
-    
-    return global_step, best_checkpoint_path, best_f1
 
+    return global_step, best_checkpoint_path, best_f1

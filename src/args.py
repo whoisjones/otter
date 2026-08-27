@@ -1,28 +1,29 @@
 from dataclasses import dataclass, field
-from typing import Optional, List
+
 from transformers import TrainingArguments
+
 
 @dataclass
 class ModelArguments:
-    """
-    Arguments for Binder.
-    """
-
-    architecture: Optional[str] = field(
+    architecture: str | None = field(
         default=None,
-        metadata={"help": "Model architecture. One of: 'bi_encoder', 'cross_encoder', 'contrastive_bi_encoder', 'contrastive_cross_encoder'."}
+        metadata={
+            "help": "Model architecture. One of: 'bi_encoder', 'cross_encoder', 'contrastive_bi_encoder', 'contrastive_cross_encoder'."
+        },
     )
-    token_encoder: Optional[str] = field(
+    token_encoder: str | None = field(
         default=None,
-        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models. Required if model_checkpoint is not provided."}
+        metadata={
+            "help": "Path to pretrained model or model identifier from huggingface.co/models. Required if model_checkpoint is not provided."
+        },
     )
-    type_encoder: Optional[str] = field(
+    type_encoder: str | None = field(
         default=None,
-        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models. Required if model_checkpoint is not provided."}
+        metadata={
+            "help": "Path to pretrained model or model identifier from huggingface.co/models. Required if model_checkpoint is not provided."
+        },
     )
-    dropout: float = field(
-        default=0.1, metadata={"help": "Dropout rate for hidden states."}
-    )
+    dropout: float = field(default=0.1, metadata={"help": "Dropout rate for hidden states."})
     linear_hidden_size: int = field(
         default=128, metadata={"help": "Size of the last linear layer."}
     )
@@ -32,23 +33,20 @@ class ModelArguments:
     init_temperature: float = field(
         default=0.03, metadata={"help": "Initial temperature for the logits."}
     )
-    start_loss_weight: float = field(
-        default=0.2, metadata={"help": "Weight for the start loss."}
+    start_loss_weight: float = field(default=0.2, metadata={"help": "Weight for the start loss."})
+    end_loss_weight: float = field(default=0.2, metadata={"help": "Weight for the end loss."})
+    span_loss_weight: float = field(default=0.6, metadata={"help": "Weight for the span loss."})
+    bce_start_pos_weight: float | None = field(
+        default=None,
+        metadata={"help": "Positive weight for the start loss. If None, no pos_weight is applied."},
     )
-    end_loss_weight: float = field(
-        default=0.2, metadata={"help": "Weight for the end loss."}
+    bce_end_pos_weight: float | None = field(
+        default=None,
+        metadata={"help": "Positive weight for the end loss. If None, no pos_weight is applied."},
     )
-    span_loss_weight: float = field(
-        default=0.6, metadata={"help": "Weight for the span loss."}
-    )
-    bce_start_pos_weight: Optional[float] = field(
-        default=None, metadata={"help": "Positive weight for the start loss. If None, no pos_weight is applied."}
-    )
-    bce_end_pos_weight: Optional[float] = field(
-        default=None, metadata={"help": "Positive weight for the end loss. If None, no pos_weight is applied."}
-    )
-    bce_span_pos_weight: Optional[float] = field(
-        default=None, metadata={"help": "Positive weight for the span loss. If None, no pos_weight is applied."}
+    bce_span_pos_weight: float | None = field(
+        default=None,
+        metadata={"help": "Positive weight for the span loss. If None, no pos_weight is applied."},
     )
     contrastive_threshold_loss_weight: float = field(
         default=0.5, metadata={"help": "Weight for the threshold loss."}
@@ -60,7 +58,10 @@ class ModelArguments:
         default=1.0, metadata={"help": "Temperature for the contrastive loss."}
     )
     type_encoder_pooling: str = field(
-        default="cls", metadata={"help": "Pooling method for type encoder. Options: 'cls' (uses CLS token) or 'mean' (mean pooling)."}
+        default="cls",
+        metadata={
+            "help": "Pooling method for type encoder. Options: 'cls' (uses CLS token) or 'mean' (mean pooling)."
+        },
     )
     prediction_threshold: float = field(
         default=0.5,
@@ -70,21 +71,15 @@ class ModelArguments:
     )
     loss_fn: str = field(
         default="bce",
-        metadata={
-            "help": "The loss function to use. One of 'bce', 'focal', 'dice', 'dice_focal'."
-        },
+        metadata={"help": "The loss function to use. One of 'bce', 'focal', 'dice', 'dice_focal'."},
     )
     focal_alpha: float = field(
         default=0.75,
-        metadata={
-            "help": "Alpha for the focal loss."
-        },
+        metadata={"help": "Alpha for the focal loss."},
     )
     focal_gamma: float = field(
         default=2.0,
-        metadata={
-            "help": "Gamma for the focal loss."
-        },
+        metadata={"help": "Gamma for the focal loss."},
     )
     dice_smooth: float = field(
         default=1.0,
@@ -100,9 +95,11 @@ class ModelArguments:
     )
     contrastive_threshold_token: str = field(
         default="label_token",
-        metadata={"help": "Token type used as prediction threshold in contrastive cross-encoder. One of 'label_token' or 'cls'."}
+        metadata={
+            "help": "Token type used as prediction threshold in contrastive cross-encoder. One of 'label_token' or 'cls'."
+        },
     )
-    model_checkpoint: Optional[str] = field(
+    model_checkpoint: str | None = field(
         default=None,
         metadata={
             "help": "Path to a pretrained span model checkpoint to load from. If provided, the model will be loaded from this checkpoint instead of being initialized from scratch."
@@ -110,33 +107,38 @@ class ModelArguments:
     )
 
     def __post_init__(self):
-        """Validate that either model_checkpoint is provided, or both token_encoder and type_encoder are provided."""
-        if self.model_checkpoint is None:
-            if self.token_encoder is None or self.type_encoder is None:
-                raise ValueError(
-                    "Either 'model_checkpoint' must be provided, or both 'token_encoder' and 'type_encoder' must be provided."
-                )
+        if self.model_checkpoint is None and (
+            self.token_encoder is None or self.type_encoder is None
+        ):
+            raise ValueError(
+                "Either 'model_checkpoint' must be provided, or both 'token_encoder' and "
+                "'type_encoder' must be provided."
+            )
 
 
 @dataclass
 class DataTrainingArguments:
-    """
-    Arguments pertaining to what data we are going to input our model for training and eval.
-    """
-
     dataset_name: str = field(
-        metadata={"help": "The name of the dataset to use, from which it will decide entity types to use."}
+        metadata={
+            "help": "The name of the dataset to use, from which it will decide entity types to use."
+        }
     )
-    train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
-    validation_file: Optional[str] = field(
+    train_file: str | None = field(
+        default=None, metadata={"help": "The input training data file (a text file)."}
+    )
+    validation_file: str | None = field(
         default=None,
-        metadata={"help": "An optional input evaluation data file to evaluate the perplexity on (a text file)."},
+        metadata={
+            "help": "An optional input evaluation data file to evaluate the perplexity on (a text file)."
+        },
     )
-    test_file: Optional[str] = field(
+    test_file: str | None = field(
         default=None,
-        metadata={"help": "An optional input test data file to evaluate the perplexity on (a text file)."},
+        metadata={
+            "help": "An optional input test data file to evaluate the perplexity on (a text file)."
+        },
     )
-    preprocessing_num_workers: Optional[int] = field(
+    preprocessing_num_workers: int | None = field(
         default=None,
         metadata={"help": "The number of processes to use for the preprocessing."},
     )
@@ -157,21 +159,15 @@ class DataTrainingArguments:
     )
     max_span_length: int = field(
         default=30,
-        metadata={
-            "help": "The maximum length of an entity span."
-        },
+        metadata={"help": "The maximum length of an entity span."},
     )
     annotation_format: str = field(
-        default='text',
-        metadata={
-            "help": "The format of the annotation. Can be 'text' or 'tokens'."
-        },
+        default="text",
+        metadata={"help": "The format of the annotation. Can be 'text' or 'tokens'."},
     )
     loss_masking: str = field(
-        default='none',
-        metadata={
-            "help": "The method to mask the loss. Can be 'none', 'all_spans' or 'subwords'."
-        },
+        default="none",
+        metadata={"help": "The method to mask the loss. Can be 'none', 'all_spans' or 'subwords'."},
     )
 
     def __post_init__(self):
@@ -211,18 +207,21 @@ class DataTrainingArguments:
 
 @dataclass
 class CustomTrainingArguments(TrainingArguments):
-    """
-    Extended TrainingArguments with custom fields for this project.
-    """
     early_stopping_patience: int = field(
         default=5,
-        metadata={"help": "Number of evaluation steps to wait before early stopping if no improvement."}
+        metadata={
+            "help": "Number of evaluation steps to wait before early stopping if no improvement."
+        },
     )
-    type_encoder_learning_rate: Optional[float] = field(
+    type_encoder_learning_rate: float | None = field(
         default=None,
-        metadata={"help": "Learning rate for the type encoder. If None, uses the same learning rate as other parameters."}
+        metadata={
+            "help": "Learning rate for the type encoder. If None, uses the same learning rate as other parameters."
+        },
     )
-    linear_layers_learning_rate: Optional[float] = field(
+    linear_layers_learning_rate: float | None = field(
         default=None,
-        metadata={"help": "Learning rate for linear layers and other non-encoder parameters. If None, uses the same learning rate as other parameters."}
+        metadata={
+            "help": "Learning rate for linear layers and other non-encoder parameters. If None, uses the same learning rate as other parameters."
+        },
     )

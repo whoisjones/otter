@@ -1,55 +1,48 @@
-import os
 import argparse
-from datetime import datetime
 import json
-import warnings
+import os
+from datetime import datetime
 
 import torch
-import transformers
-from transformers import AutoTokenizer
-from datasets import load_dataset, DatasetDict, get_dataset_config_names
-from torch.utils.data import DataLoader
 from accelerate import Accelerator
+from datasets import DatasetDict, get_dataset_config_names, load_dataset
+from torch.utils.data import DataLoader
+from transformers import AutoTokenizer
 
-warnings.filterwarnings("ignore", message=".*beta.*renamed.*bias.*")
-warnings.filterwarnings("ignore", message=".*gamma.*renamed.*weight.*")
-warnings.filterwarnings("ignore", category=FutureWarning, message=".*beta.*")
-warnings.filterwarnings("ignore", category=FutureWarning, message=".*gamma.*")
-warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
-os.environ["PYTHONWARNINGS"] = "ignore::FutureWarning"
-
-from src.model import (
-    OtterBiEncoderModel,
-    OtterCrossEncoderModel,
-    OtterContrastiveBiEncoderModel,
-    OtterContrastiveCrossEncoderModel,
-)
-from src.config import SpanModelConfig
 from src.collator import (
     EvalCollatorBiEncoder,
-    EvalCollatorCrossEncoder,
     EvalCollatorContrastiveBiEncoder,
     EvalCollatorContrastiveCrossEncoder,
+    EvalCollatorCrossEncoder,
+)
+from src.config import SpanModelConfig, is_bi_encoder, is_contrastive
+from src.logger import setup_logger, silence_transformers_warnings
+from src.model import (
+    OtterBiEncoderModel,
+    OtterContrastiveBiEncoderModel,
+    OtterContrastiveCrossEncoderModel,
+    OtterCrossEncoderModel,
 )
 from src.trainer import evaluate
-from src.logger import setup_logger
-
-transformers.logging.set_verbosity_error()
 
 ARCHITECTURE_REGISTRY = {
     "bi_encoder": (OtterBiEncoderModel, EvalCollatorBiEncoder),
     "cross_encoder": (OtterCrossEncoderModel, EvalCollatorCrossEncoder),
     "contrastive_bi_encoder": (OtterContrastiveBiEncoderModel, EvalCollatorContrastiveBiEncoder),
-    "contrastive_cross_encoder": (OtterContrastiveCrossEncoderModel, EvalCollatorContrastiveCrossEncoder),
+    "contrastive_cross_encoder": (
+        OtterContrastiveCrossEncoderModel,
+        EvalCollatorContrastiveCrossEncoder,
+    ),
 }
 
-
-def _is_bi_encoder(architecture: str) -> bool:
-    return "bi_encoder" in architecture
-
-
-def _is_contrastive(architecture: str) -> bool:
-    return "contrastive" in architecture
+# Older checkpoints predate the explicit "architecture" config field and are
+# identified by the class name transformers stored in "architectures".
+HF_CLASS_TO_ARCHITECTURE = {
+    "OtterBiEncoderModel": "bi_encoder",
+    "OtterCrossEncoderModel": "cross_encoder",
+    "OtterContrastiveBiEncoderModel": "contrastive_bi_encoder",
+    "OtterContrastiveCrossEncoderModel": "contrastive_cross_encoder",
+}
 
 
 def run_eval(
@@ -67,19 +60,11 @@ def run_eval(
 
     config = SpanModelConfig.from_pretrained(pretrained_model_name_or_path)
 
-    # Determine architecture: prefer custom field, fall back to HF architectures list
-    _HF_CLASS_TO_ARCH = {
-        "OtterBiEncoderModel": "bi_encoder",
-        "OtterCrossEncoderModel": "cross_encoder",
-        "OtterContrastiveBiEncoderModel": "contrastive_bi_encoder",
-        "OtterContrastiveCrossEncoderModel": "contrastive_cross_encoder",
-    }
     architecture = getattr(config, "architecture", None)
     if architecture is None:
-        hf_archs = getattr(config, "architectures", None) or []
-        for cls_name in hf_archs:
-            if cls_name in _HF_CLASS_TO_ARCH:
-                architecture = _HF_CLASS_TO_ARCH[cls_name]
+        for class_name in getattr(config, "architectures", None) or []:
+            if class_name in HF_CLASS_TO_ARCHITECTURE:
+                architecture = HF_CLASS_TO_ARCHITECTURE[class_name]
                 break
     if architecture is None:
         raise ValueError(
@@ -91,8 +76,8 @@ def run_eval(
         raise ValueError(f"Unknown architecture '{architecture}'.")
 
     model_cls, eval_collator_cls = ARCHITECTURE_REGISTRY[architecture]
-    bi_encoder = _is_bi_encoder(architecture)
-    contrastive = _is_contrastive(architecture)
+    bi_encoder = is_bi_encoder(architecture)
+    contrastive = is_contrastive(architecture)
 
     model = model_cls.from_pretrained(pretrained_model_name_or_path)
 
@@ -127,7 +112,7 @@ def run_eval(
                 raise ValueError(
                     f"Invalid threshold '{prediction_threshold}'. "
                     "Must be a float, 'cls', or 'label_token'."
-                )
+                ) from None
     else:
         default = getattr(model.config, "prediction_threshold", 0.5)
         if isinstance(default, str):
@@ -142,7 +127,7 @@ def run_eval(
     if "spans_char" in dataset.column_names:
         dataset = dataset.rename_column("spans_char", "char_spans")
 
-    def _rename_annotation_key(sample):
+    def rename_annotation_key(sample):
         return {
             "char_spans": [
                 {"start": s["start"], "end": s["end"], "label": s.get("label", s.get("tag"))}
@@ -157,10 +142,10 @@ def run_eval(
     if dataset.column_names and "char_spans" in dataset.column_names:
         first = dataset[0]["char_spans"]
         if first and "tag" in first[0]:
-            dataset = dataset.map(_rename_annotation_key)
+            dataset = dataset.map(rename_annotation_key)
 
     span_key = "token_spans" if evaluation_format == "tokens" else "char_spans"
-    test_labels = list(set(span["label"] for sample in dataset for span in sample[span_key]))
+    test_labels = list({span["label"] for sample in dataset for span in sample[span_key]})
     label2id = {label: idx for idx, label in enumerate(test_labels)}
 
     max_seq_length = 1024 if config.token_encoder == "jhu-clsp/mmBERT-base" else 512
@@ -179,16 +164,18 @@ def run_eval(
             type_encodings=type_encodings,
             label2id=label2id,
             max_seq_length=max_seq_length,
+            max_span_length=config.max_span_length,
             format=evaluation_format,
             loss_masking=loss_masking,
         )
     else:
-        kwargs = dict(
-            label2id=label2id,
-            max_seq_length=max_seq_length,
-            format=evaluation_format,
-            loss_masking=loss_masking,
-        )
+        kwargs = {
+            "label2id": label2id,
+            "max_seq_length": max_seq_length,
+            "max_span_length": config.max_span_length,
+            "format": evaluation_format,
+            "loss_masking": loss_masking,
+        }
         if contrastive:
             kwargs["prediction_threshold"] = collator_threshold or "label_token"
         test_collator = eval_collator_cls(token_tokenizer, **kwargs)
@@ -234,12 +221,16 @@ def run_eval(
 
 
 def main(args):
+    silence_transformers_warnings()
+
     if args.pretrained_model_name_or_path is None:
         raise ValueError("--pretrained_model_name_or_path is required")
 
     if args.evaluation_dataset.endswith(".jsonl"):
         test_splits = {
-            args.evaluation_dataset: load_dataset("json", data_files=args.evaluation_dataset, split="train")
+            args.evaluation_dataset: load_dataset(
+                "json", data_files=args.evaluation_dataset, split="train"
+            )
         }
     elif os.path.exists(args.evaluation_dataset) and os.path.isdir(args.evaluation_dataset):
         ds = DatasetDict.load_from_disk(args.evaluation_dataset)

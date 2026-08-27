@@ -1,10 +1,12 @@
 import numpy as np
 
+
 def sigmoid(z):
-    return 1/(1 + np.exp(-z))
+    return 1 / (1 + np.exp(-z))
+
 
 def compute_span_predictions(span_logits, span_mask, span_mapping, id2label, threshold=0.5):
-    B, C, S = span_logits.shape
+    batch_size = span_logits.shape[0]
 
     span_probs = sigmoid(span_logits)
     if threshold == "cls" or threshold == "label_token":
@@ -19,24 +21,28 @@ def compute_span_predictions(span_logits, span_mask, span_mapping, id2label, thr
     type_ids = type_ids[order].tolist()
     span_ids = span_ids[order].tolist()
     confidences = confidences[order].tolist()
-    
-    predictions = [[] for _ in range(B)]
-    used_by_batch = [set() for _ in range(B)]
 
-    for b, t, s, c in zip(batch_ids, type_ids, span_ids, confidences):
-        start, end = span_mapping[b, s].tolist()
-        if any(pos in used_by_batch[b] for pos in range(start, end + 1)):
+    predictions = [[] for _ in range(batch_size)]
+    used_by_batch = [set() for _ in range(batch_size)]
+
+    for batch_id, type_id, span_id, confidence in zip(batch_ids, type_ids, span_ids, confidences):
+        start, end = span_mapping[batch_id, span_id].tolist()
+        if any(pos in used_by_batch[batch_id] for pos in range(start, end + 1)):
             continue
-        predictions[b].append({"start": start, "end": end, "label": id2label[t], "confidence": c})
-        used_by_batch[b].update(range(start, end + 1))
+        predictions[batch_id].append(
+            {"start": start, "end": end, "label": id2label[type_id], "confidence": confidence}
+        )
+        used_by_batch[batch_id].update(range(start, end + 1))
 
     return predictions
 
-def _norm_pred_item(p):
+
+def normalize_prediction(p):
     if isinstance(p, dict):
         return int(p["start"]), int(p["end"]), str(p["label"])
-    s, e, l = p[:3]
-    return int(s), int(e), str(l)
+    start, end, label = p[:3]
+    return int(start), int(end), str(label)
+
 
 def compute_tp_fn_fp(predictions: set, labels: set) -> dict:
     if not predictions and not labels:
@@ -46,43 +52,47 @@ def compute_tp_fn_fp(predictions: set, labels: set) -> dict:
     fp = len(predictions) - tp
     return {"tp": tp, "fn": fn, "fp": fp}
 
+
 def add_batch_metrics(golds, predictions, metrics_by_type):
-    """
-    golds: List[List[{'start','end','label'}]]
-    predictions: List[List[ dict|tuple ]]
-    metrics_by_type: defaultdict(lambda: {"tp":0,"fp":0,"fn":0})
-    """
     for gold_spans, pred_spans in zip(golds, predictions):
         gold_set = {(int(g["start"]), int(g["end"]), str(g["label"])) for g in gold_spans}
-        pred_set = {_norm_pred_item(p) for p in pred_spans}
+        pred_set = {normalize_prediction(p) for p in pred_spans}
 
-        types = {t for *_, t in gold_set} | {t for *_, t in pred_set}
-        for t in types:
-            gold_t = {(s, e, tt) for (s, e, tt) in gold_set if tt == t}
-            pred_t = {(s, e, tt) for (s, e, tt) in pred_set if tt == t}
-            c = compute_tp_fn_fp(pred_t, gold_t)
-            m = metrics_by_type[t]
-            m["tp"] += c["tp"]
-            m["fp"] += c["fp"]
-            m["fn"] += c["fn"]
+        types = {label for *_, label in gold_set} | {label for *_, label in pred_set}
+        for entity_type in types:
+            gold_of_type = {span for span in gold_set if span[2] == entity_type}
+            pred_of_type = {span for span in pred_set if span[2] == entity_type}
+            counts = compute_tp_fn_fp(pred_of_type, gold_of_type)
+            totals = metrics_by_type[entity_type]
+            totals["tp"] += counts["tp"]
+            totals["fp"] += counts["fp"]
+            totals["fn"] += counts["fn"]
+
 
 def finalize_metrics(metrics_by_type, id2label=None):
-    """Return per-class + micro/macro dicts. id2label optional."""
     per_class = {}
-    TP = FP = FN = 0
-    for t, m in metrics_by_type.items():
-        tp, fp, fn = m["tp"], m["fp"], m["fn"]
-        prec = tp / (tp + fp) if (tp + fp) else 0.0
-        rec = tp / (tp + fn) if (tp + fn) else 0.0
-        f1 = (2*prec*rec / (prec + rec)) if (prec + rec) else 0.0
-        name = id2label.get(t, t) if id2label else t
-        per_class[name] = {"tp": tp, "fp": fp, "fn": fn,
-                           "precision": prec, "recall": rec, "f1": f1}
-        TP += tp; FP += fp; FN += fn
+    total_tp = total_fp = total_fn = 0
+    for entity_type, totals in metrics_by_type.items():
+        tp, fp, fn = totals["tp"], totals["fp"], totals["fn"]
+        precision = tp / (tp + fp) if (tp + fp) else 0.0
+        recall = tp / (tp + fn) if (tp + fn) else 0.0
+        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+        name = id2label.get(entity_type, entity_type) if id2label else entity_type
+        per_class[name] = {
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+        }
+        total_tp += tp
+        total_fp += fp
+        total_fn += fn
 
-    micro_p = TP / (TP + FP) if (TP + FP) else 0.0
-    micro_r = TP / (TP + FN) if (TP + FN) else 0.0
-    micro_f = (2*micro_p*micro_r / (micro_p + micro_r)) if (micro_p + micro_r) else 0.0
+    micro_p = total_tp / (total_tp + total_fp) if (total_tp + total_fp) else 0.0
+    micro_r = total_tp / (total_tp + total_fn) if (total_tp + total_fn) else 0.0
+    micro_f = (2 * micro_p * micro_r / (micro_p + micro_r)) if (micro_p + micro_r) else 0.0
 
     if per_class:
         macro_p = sum(v["precision"] for v in per_class.values()) / len(per_class)
@@ -93,8 +103,18 @@ def finalize_metrics(metrics_by_type, id2label=None):
 
     return {
         "per_class": per_class,
-        "micro": {"precision": micro_p, "recall": micro_r, "f1": micro_f,
-                  "tp": TP, "fp": FP, "fn": FN},
-        "macro": {"precision": macro_p, "recall": macro_r, "f1": macro_f,
-                  "num_classes": len(per_class)}
+        "micro": {
+            "precision": micro_p,
+            "recall": micro_r,
+            "f1": micro_f,
+            "tp": total_tp,
+            "fp": total_fp,
+            "fn": total_fn,
+        },
+        "macro": {
+            "precision": macro_p,
+            "recall": macro_r,
+            "f1": macro_f,
+            "num_classes": len(per_class),
+        },
     }

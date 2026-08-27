@@ -1,9 +1,0 @@
-torch
-transformers
-accelerate
-datasets
-tqdm
-numpy
-safetensors
-sentence-transformers
-

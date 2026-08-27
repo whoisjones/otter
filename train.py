@@ -1,64 +1,53 @@
+import json
 import os
 import sys
-import json
-import warnings
 from pathlib import Path
 
 import torch
-import transformers
-from transformers import AutoModel, AutoTokenizer, MT5EncoderModel, get_scheduler, HfArgumentParser
+from accelerate import Accelerator, DistributedDataParallelKwargs
 from datasets import load_dataset
 from torch.utils.data import DataLoader
-from accelerate import Accelerator, DistributedDataParallelKwargs
+from transformers import AutoModel, AutoTokenizer, HfArgumentParser, MT5EncoderModel, get_scheduler
 
-warnings.filterwarnings("ignore", message=".*beta.*renamed.*bias.*")
-warnings.filterwarnings("ignore", message=".*gamma.*renamed.*weight.*")
-warnings.filterwarnings("ignore", category=FutureWarning, message=".*beta.*")
-warnings.filterwarnings("ignore", category=FutureWarning, message=".*gamma.*")
-warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
-os.environ["PYTHONWARNINGS"] = "ignore::FutureWarning"
-
+from src.args import CustomTrainingArguments, DataTrainingArguments, ModelArguments
+from src.collator import (
+    EvalCollatorBiEncoder,
+    EvalCollatorContrastiveBiEncoder,
+    EvalCollatorContrastiveCrossEncoder,
+    EvalCollatorCrossEncoder,
+    TrainCollatorBiEncoder,
+    TrainCollatorContrastiveBiEncoder,
+    TrainCollatorContrastiveCrossEncoder,
+    TrainCollatorCrossEncoder,
+)
+from src.config import SpanModelConfig, is_bi_encoder, is_contrastive
+from src.logger import setup_logger, silence_transformers_warnings
 from src.model import (
     OtterBiEncoderModel,
-    OtterCrossEncoderModel,
     OtterContrastiveBiEncoderModel,
     OtterContrastiveCrossEncoderModel,
+    OtterCrossEncoderModel,
 )
-from src.config import SpanModelConfig
-from src.collator import (
-    TrainCollatorBiEncoder,
-    EvalCollatorBiEncoder,
-    TrainCollatorCrossEncoder,
-    EvalCollatorCrossEncoder,
-    TrainCollatorContrastiveBiEncoder,
-    EvalCollatorContrastiveBiEncoder,
-    TrainCollatorContrastiveCrossEncoder,
-    EvalCollatorContrastiveCrossEncoder,
-)
-from src.trainer import train, evaluate
-from src.logger import setup_logger
-from src.args import ModelArguments, DataTrainingArguments, CustomTrainingArguments
-
-transformers.logging.set_verbosity_error()
+from src.trainer import evaluate, train
 
 # Registry: architecture name -> (model class, train collator class, eval collator class)
 ARCHITECTURE_REGISTRY = {
     "bi_encoder": (OtterBiEncoderModel, TrainCollatorBiEncoder, EvalCollatorBiEncoder),
     "cross_encoder": (OtterCrossEncoderModel, TrainCollatorCrossEncoder, EvalCollatorCrossEncoder),
-    "contrastive_bi_encoder": (OtterContrastiveBiEncoderModel, TrainCollatorContrastiveBiEncoder, EvalCollatorContrastiveBiEncoder),
-    "contrastive_cross_encoder": (OtterContrastiveCrossEncoderModel, TrainCollatorContrastiveCrossEncoder, EvalCollatorContrastiveCrossEncoder),
+    "contrastive_bi_encoder": (
+        OtterContrastiveBiEncoderModel,
+        TrainCollatorContrastiveBiEncoder,
+        EvalCollatorContrastiveBiEncoder,
+    ),
+    "contrastive_cross_encoder": (
+        OtterContrastiveCrossEncoderModel,
+        TrainCollatorContrastiveCrossEncoder,
+        EvalCollatorContrastiveCrossEncoder,
+    ),
 }
 
 
-def _is_bi_encoder(architecture: str) -> bool:
-    return "bi_encoder" in architecture
-
-
-def _is_contrastive(architecture: str) -> bool:
-    return "contrastive" in architecture
-
-
-def _build_config(model_args, data_args) -> SpanModelConfig:
+def build_config(model_args, data_args) -> SpanModelConfig:
     return SpanModelConfig(
         architecture=model_args.architecture,
         token_encoder=model_args.token_encoder,
@@ -88,16 +77,9 @@ def _build_config(model_args, data_args) -> SpanModelConfig:
     )
 
 
-def _setup_model_and_tokenizers(model_args, data_args, architecture, model_cls, logger, accelerator):
-    """Load or initialise the model and tokenizer(s).
-
-    Returns:
-        model, tokenizers
-        where `tokenizers` is either a single tokenizer (cross-encoder) or a
-        (token_tokenizer, type_tokenizer) tuple (bi-encoder).
-    """
-    bi_encoder = _is_bi_encoder(architecture)
-    contrastive = _is_contrastive(architecture)
+def setup_model_and_tokenizers(model_args, data_args, architecture, model_cls, logger, accelerator):
+    bi_encoder = is_bi_encoder(architecture)
+    contrastive = is_contrastive(architecture)
 
     if model_args.model_checkpoint is not None:
         if accelerator.is_main_process:
@@ -141,7 +123,7 @@ def _setup_model_and_tokenizers(model_args, data_args, architecture, model_cls, 
                     tokenizer.add_tokens(["[SPAN_THRESHOLD]"], special_tokens=True)
             tokenizers = tokenizer
     else:
-        config = _build_config(model_args, data_args)
+        config = build_config(model_args, data_args)
         model = model_cls(config=config)
 
         if bi_encoder:
@@ -189,9 +171,9 @@ def _setup_model_and_tokenizers(model_args, data_args, architecture, model_cls, 
     return model, config, tokenizers
 
 
-def _build_train_collator(architecture, train_collator_cls, tokenizers, data_args, model_args):
-    bi_encoder = _is_bi_encoder(architecture)
-    contrastive = _is_contrastive(architecture)
+def build_train_collator(architecture, train_collator_cls, tokenizers, data_args, model_args):
+    bi_encoder = is_bi_encoder(architecture)
+    contrastive = is_contrastive(architecture)
 
     if bi_encoder:
         token_tokenizer, type_tokenizer = tokenizers
@@ -199,23 +181,27 @@ def _build_train_collator(architecture, train_collator_cls, tokenizers, data_arg
             token_tokenizer,
             type_tokenizer,
             max_seq_length=data_args.max_seq_length,
+            max_span_length=data_args.max_span_length,
             format=data_args.annotation_format,
             loss_masking=data_args.loss_masking,
         )
     else:
-        kwargs = dict(
-            max_seq_length=data_args.max_seq_length,
-            format=data_args.annotation_format,
-            loss_masking=data_args.loss_masking,
-        )
+        kwargs = {
+            "max_seq_length": data_args.max_seq_length,
+            "max_span_length": data_args.max_span_length,
+            "format": data_args.annotation_format,
+            "loss_masking": data_args.loss_masking,
+        }
         if contrastive:
             kwargs["prediction_threshold"] = model_args.contrastive_threshold_token
         return train_collator_cls(tokenizers, **kwargs)
 
 
-def _build_eval_collator(architecture, eval_collator_cls, tokenizers, label2id, data_args, model_args):
-    bi_encoder = _is_bi_encoder(architecture)
-    contrastive = _is_contrastive(architecture)
+def build_eval_collator(
+    architecture, eval_collator_cls, tokenizers, label2id, data_args, model_args
+):
+    bi_encoder = is_bi_encoder(architecture)
+    contrastive = is_contrastive(architecture)
 
     if bi_encoder:
         token_tokenizer, type_tokenizer = tokenizers
@@ -232,23 +218,25 @@ def _build_eval_collator(architecture, eval_collator_cls, tokenizers, label2id, 
             type_encodings=type_encodings,
             label2id=label2id,
             max_seq_length=data_args.max_seq_length,
+            max_span_length=data_args.max_span_length,
             format=data_args.annotation_format,
             loss_masking=data_args.loss_masking,
         )
     else:
-        kwargs = dict(
-            label2id=label2id,
-            max_seq_length=data_args.max_seq_length,
-            format=data_args.annotation_format,
-            loss_masking=data_args.loss_masking,
-        )
+        kwargs = {
+            "label2id": label2id,
+            "max_seq_length": data_args.max_seq_length,
+            "max_span_length": data_args.max_span_length,
+            "format": data_args.annotation_format,
+            "loss_masking": data_args.loss_masking,
+        }
         if contrastive:
             kwargs["prediction_threshold"] = model_args.contrastive_threshold_token
         return eval_collator_cls(tokenizers, **kwargs)
 
 
-def _build_optimizer(model, training_args, architecture):
-    bi_encoder = _is_bi_encoder(architecture)
+def build_optimizer(model, training_args, architecture):
+    bi_encoder = is_bi_encoder(architecture)
 
     if bi_encoder and (
         training_args.type_encoder_learning_rate is not None
@@ -257,7 +245,8 @@ def _build_optimizer(model, training_args, architecture):
         token_encoder_params = list(model.token_encoder.parameters())
         type_encoder_params = list(model.type_encoder.parameters())
         linear_params = [
-            p for name, p in model.named_parameters()
+            p
+            for name, p in model.named_parameters()
             if not name.startswith("token_encoder.") and not name.startswith("type_encoder.")
         ]
         param_groups = [
@@ -276,8 +265,7 @@ def _build_optimizer(model, training_args, architecture):
     if not bi_encoder and training_args.linear_layers_learning_rate is not None:
         token_encoder_params = list(model.token_encoder.parameters())
         linear_params = [
-            p for name, p in model.named_parameters()
-            if not name.startswith("token_encoder.")
+            p for name, p in model.named_parameters() if not name.startswith("token_encoder.")
         ]
         param_groups = [
             {"params": token_encoder_params, "lr": training_args.learning_rate},
@@ -288,15 +276,19 @@ def _build_optimizer(model, training_args, architecture):
     return torch.optim.AdamW(model.parameters(), lr=training_args.learning_rate)
 
 
-def _get_labels(dataset_split, data_args):
+def get_labels(dataset_split, data_args):
     span_key = "token_spans" if data_args.annotation_format == "tokens" else "char_spans"
-    labels = list(set(span["label"] for sample in dataset_split for span in sample[span_key]))
+    labels = list({span["label"] for sample in dataset_split for span in sample[span_key]})
     return {label: idx for idx, label in enumerate(labels)}
 
 
 def main():
+    silence_transformers_warnings()
+
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, CustomTrainingArguments))
-    model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[-1]))
+    model_args, data_args, training_args = parser.parse_json_file(
+        json_file=os.path.abspath(sys.argv[-1])
+    )
 
     architecture = model_args.architecture
     if architecture is None:
@@ -311,7 +303,7 @@ def main():
         )
 
     model_cls, train_collator_cls, eval_collator_cls = ARCHITECTURE_REGISTRY[architecture]
-    bi_encoder = _is_bi_encoder(architecture)
+    bi_encoder = is_bi_encoder(architecture)
 
     output_dir = training_args.output_dir
     os.makedirs(output_dir, exist_ok=True)
@@ -347,15 +339,19 @@ def main():
     if data_args.train_file is not None:
         dataset["train"] = load_dataset("json", data_files={"train": data_args.train_file})["train"]
     if data_args.validation_file is not None:
-        dataset["validation"] = load_dataset("json", data_files={"validation": data_args.validation_file})["validation"]
+        dataset["validation"] = load_dataset(
+            "json", data_files={"validation": data_args.validation_file}
+        )["validation"]
     if data_args.test_file is not None:
         dataset["test"] = load_dataset("json", data_files={"test": data_args.test_file})["test"]
 
-    model, config, tokenizers = _setup_model_and_tokenizers(
+    model, config, tokenizers = setup_model_and_tokenizers(
         model_args, data_args, architecture, model_cls, logger, accelerator
     )
 
-    train_collator = _build_train_collator(architecture, train_collator_cls, tokenizers, data_args, model_args)
+    train_collator = build_train_collator(
+        architecture, train_collator_cls, tokenizers, data_args, model_args
+    )
 
     if training_args.do_train:
         if "train" not in dataset:
@@ -371,8 +367,10 @@ def main():
     if training_args.do_eval:
         if "validation" not in dataset:
             raise ValueError("--do_eval requires a validation file.")
-        val_label2id = _get_labels(dataset["validation"], data_args)
-        eval_collator = _build_eval_collator(architecture, eval_collator_cls, tokenizers, val_label2id, data_args, model_args)
+        val_label2id = get_labels(dataset["validation"], data_args)
+        eval_collator = build_eval_collator(
+            architecture, eval_collator_cls, tokenizers, val_label2id, data_args, model_args
+        )
         eval_dataloader = DataLoader(
             dataset["validation"],
             batch_size=training_args.per_device_eval_batch_size,
@@ -384,8 +382,10 @@ def main():
     if training_args.do_predict:
         if "test" not in dataset:
             raise ValueError("--do_predict requires a test file.")
-        test_label2id = _get_labels(dataset["test"], data_args)
-        test_collator = _build_eval_collator(architecture, eval_collator_cls, tokenizers, test_label2id, data_args, model_args)
+        test_label2id = get_labels(dataset["test"], data_args)
+        test_collator = build_eval_collator(
+            architecture, eval_collator_cls, tokenizers, test_label2id, data_args, model_args
+        )
         test_dataloader = DataLoader(
             dataset["test"],
             batch_size=training_args.per_device_eval_batch_size,
@@ -394,7 +394,7 @@ def main():
             num_workers=0,
         )
 
-    optimizer = _build_optimizer(model, training_args, architecture)
+    optimizer = build_optimizer(model, training_args, architecture)
     scheduler = get_scheduler(
         name=training_args.lr_scheduler_type,
         optimizer=optimizer,
@@ -468,7 +468,9 @@ def main():
                         "test_metrics": test_metrics,
                         "config": config.to_dict(),
                         "final_step": final_step,
-                        "best_checkpoint_path": str(best_checkpoint_path) if best_checkpoint_path else None,
+                        "best_checkpoint_path": str(best_checkpoint_path)
+                        if best_checkpoint_path
+                        else None,
                         "best_validation_f1": best_f1,
                     },
                     f,
@@ -476,9 +478,8 @@ def main():
                 )
             logger.info(f"\nTest results saved to {test_results_path}")
 
-    if accelerator.num_processes > 1:
-        if torch.distributed.is_initialized():
-            torch.distributed.destroy_process_group()
+    if accelerator.num_processes > 1 and torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":

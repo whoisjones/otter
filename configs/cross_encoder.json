@@ -6,7 +6,7 @@
     "dataset_name": "finerweb",
     "annotation_format": "text",
     "loss_masking": "subwords",
-    "train_file": "/vol/tmp/goldejon/otter_resubmission/training_data/finerweb_splitted/eng.jsonl",
+    "train_file": "data/finerweb/*.jsonl",
     "validation_file": null,
     "test_file": null,
     "output_dir": "models/cross_encoder",

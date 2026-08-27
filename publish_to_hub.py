@@ -1,19 +1,5 @@
-"""Build and publish the Otter model repositories on the Hugging Face Hub.
-
-The released weights are never rebuilt or re-uploaded -- only the packaging around
-them: a self-contained `config.json`, the `trust_remote_code` modules, the
-tokenizers, and the model card.
-
-    python publish_to_hub.py --out-dir build/hub
-    python publish_to_hub.py --out-dir build/hub --example
-    python publish_to_hub.py --out-dir build/hub --example --push
-
-`src/hub/` holds the two hand-written modules. Everything else a published repo
-needs -- `masks.py`, `loss.py`, `metrics.py`, `collate_fn.py` -- is generated here
-from `src/` so the Hub copies cannot drift away from the training code.
-"""
-
 import argparse
+import ast
 import json
 import shutil
 from pathlib import Path
@@ -86,32 +72,56 @@ THRESHOLD = {"bi_encoder": 0.2, "cross_encoder": 0.5}
 # Config keys that describe the trained model. Anything else in the old config.json
 # (bookkeeping written by an older transformers) is dropped.
 CARRIED_KEYS = [
-    "loss_fn", "max_span_length", "linear_hidden_size", "span_width_embedding_size",
-    "dropout", "init_temperature", "prediction_threshold", "start_loss_weight",
-    "end_loss_weight", "span_loss_weight", "bce_start_pos_weight", "bce_end_pos_weight",
-    "bce_span_pos_weight", "focal_alpha", "focal_gamma", "contrastive_threshold_loss_weight",
-    "contrastive_span_loss_weight", "contrastive_tau", "type_encoder_pooling",
+    "loss_fn",
+    "max_span_length",
+    "linear_hidden_size",
+    "span_width_embedding_size",
+    "dropout",
+    "init_temperature",
+    "prediction_threshold",
+    "start_loss_weight",
+    "end_loss_weight",
+    "span_loss_weight",
+    "bce_start_pos_weight",
+    "bce_end_pos_weight",
+    "bce_span_pos_weight",
+    "focal_alpha",
+    "focal_gamma",
+    "contrastive_threshold_loss_weight",
+    "contrastive_span_loss_weight",
+    "contrastive_tau",
+    "type_encoder_pooling",
 ]
 
 # Files earlier uploads left behind that the current layout replaces.
-STALE = ["configuration_biencoder.py", "modeling_biencoder.py",
-         "configuration_crossencoder.py", "modeling_crossencoder.py"]
+STALE = [
+    "configuration_biencoder.py",
+    "modeling_biencoder.py",
+    "configuration_crossencoder.py",
+    "modeling_crossencoder.py",
+]
 
 
 def build_collate_fn():
-    """Flatten the collators into one module, keeping their imports at the top."""
-    header = ['"""Collators for fine-tuning Otter models.\n\n'
-              'Generated from src/collator/ -- see https://github.com/whoisjones/otter.\n"""\n']
+    header = [
+        '"""Collators for fine-tuning Otter models.\n\n'
+        'Generated from src/collator/ -- see https://github.com/whoisjones/otter.\n"""\n'
+    ]
     seen, bodies = set(), []
     for path in COLLATORS:
-        body = []
-        for line in path.read_text().splitlines():
-            if line.startswith(("import ", "from ")):
-                if line not in seen:
-                    seen.add(line)
-                    header.append(line)
-            else:
-                body.append(line)
+        source = path.read_text()
+        lines = source.splitlines()
+        tree = ast.parse(source)
+        import_lines = set()
+        for node in tree.body:
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            import_lines.update(range(node.lineno, node.end_lineno + 1))
+            statement = ast.unparse(node)
+            if statement not in seen:
+                seen.add(statement)
+                header.append(statement)
+        body = [line for i, line in enumerate(lines, start=1) if i not in import_lines]
         bodies.append("\n".join(body).strip("\n"))
     return "\n".join(header) + "\n\n\n" + "\n\n\n".join(bodies) + "\n"
 
@@ -128,21 +138,26 @@ def _fetch(repo, filename, dest_dir):
 
 
 def _encoder_config_dict(out_dir, filename, fallback_name):
-    """Load an encoder sub-config from the staged repo, else from its base model."""
     path = out_dir / filename
     config = AutoConfig.from_pretrained(str(path) if path.exists() else fallback_name)
     data = config.to_dict()
-    for key in ("transformers_version", "_attn_implementation_autoset", "architectures",
-                "_name_or_path", "torch_dtype"):
+    for key in (
+        "transformers_version",
+        "_attn_implementation_autoset",
+        "architectures",
+        "_name_or_path",
+        "torch_dtype",
+    ):
         data.pop(key, None)
     return data
 
 
 def _stage_tokenizers(spec, out_dir):
-    """Ship the tokenizers with the checkpoint so no base repo is needed at load time."""
     if spec["architecture"] == "bi_encoder":
-        for subfolder, fallback in (("token_tokenizer", spec["token_encoder"]),
-                                    ("type_tokenizer", spec["type_encoder"])):
+        for subfolder, fallback in (
+            ("token_tokenizer", spec["token_encoder"]),
+            ("type_tokenizer", spec["type_encoder"]),
+        ):
             if (out_dir / subfolder).exists() and any((out_dir / subfolder).iterdir()):
                 continue
             AutoTokenizer.from_pretrained(fallback).save_pretrained(str(out_dir / subfolder))
@@ -155,19 +170,17 @@ def _stage_tokenizers(spec, out_dir):
 
 
 def _run_example(out_dir):
-    """Run the model card's own snippet so the output shown is this model's output.
-
-    Needs the weights next to the staged files; the Hub copy can be linked in. Without
-    them the card omits the sample output rather than showing another model's.
-    """
     if not (out_dir / "model.safetensors").exists():
         print("    (no local weights -- model card omits sample output)")
         return None
     from transformers import AutoModel
+
     model = AutoModel.from_pretrained(str(out_dir), trust_remote_code=True)
     model.eval()
-    lines = [f"{e['text']!r:25} {e['label']:15} {e['score']:.2f}"
-             for e in model.predict(EXAMPLE_TEXT, labels=EXAMPLE_LABELS)]
+    lines = [
+        f"{e['text']!r:25} {e['label']:15} {e['score']:.2f}"
+        for e in model.predict(EXAMPLE_TEXT, labels=EXAMPLE_LABELS)
+    ]
     del model
     return "\n".join(lines)
 
@@ -206,26 +219,30 @@ def build(name, spec, out_root, with_example=False):
 
     architecture = spec["architecture"]
     config = {key: old_config.get(key) for key in CARRIED_KEYS}
-    config.update({
-        "model_type": MODEL_TYPE[architecture],
-        "architectures": [MODEL_CLASS[architecture]],
-        "auto_map": {
-            "AutoConfig": f"configuration_otter.{CONFIG_CLASS[architecture]}",
-            "AutoModel": f"modeling_otter.{MODEL_CLASS[architecture]}",
-            "AutoModelForTokenClassification": f"modeling_otter.{MODEL_CLASS[architecture]}",
-        },
-        "architecture": architecture,
-        "token_encoder": spec["token_encoder"],
-        "type_encoder": spec["type_encoder"],
-        "max_seq_length": spec["max_seq_length"],
-        "prediction_threshold": THRESHOLD[architecture],
-        "token_encoder_config": _encoder_config_dict(
-            out_dir, "token_encoder_config.json", spec["token_encoder"]),
-        "dtype": "float32",
-    })
+    config.update(
+        {
+            "model_type": MODEL_TYPE[architecture],
+            "architectures": [MODEL_CLASS[architecture]],
+            "auto_map": {
+                "AutoConfig": f"configuration_otter.{CONFIG_CLASS[architecture]}",
+                "AutoModel": f"modeling_otter.{MODEL_CLASS[architecture]}",
+                "AutoModelForTokenClassification": f"modeling_otter.{MODEL_CLASS[architecture]}",
+            },
+            "architecture": architecture,
+            "token_encoder": spec["token_encoder"],
+            "type_encoder": spec["type_encoder"],
+            "max_seq_length": spec["max_seq_length"],
+            "prediction_threshold": THRESHOLD[architecture],
+            "token_encoder_config": _encoder_config_dict(
+                out_dir, "token_encoder_config.json", spec["token_encoder"]
+            ),
+            "dtype": "float32",
+        }
+    )
     if architecture == "bi_encoder":
         config["type_encoder_config"] = _encoder_config_dict(
-            out_dir, "type_encoder_config.json", spec["type_encoder"])
+            out_dir, "type_encoder_config.json", spec["type_encoder"]
+        )
     (out_dir / "config.json").write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
 
     for module in ("configuration_otter.py", "modeling_otter.py"):
@@ -236,18 +253,14 @@ def build(name, spec, out_root, with_example=False):
 
     example = _run_example(out_dir) if with_example else None
     (out_dir / "README.md").write_text(
-        render_model_card(name, spec, THRESHOLD[architecture], example_output=example))
+        render_model_card(name, spec, THRESHOLD[architecture], example_output=example)
+    )
 
     print(f"    -> {out_dir}")
     return out_dir
 
 
 def push(name, spec, out_dir, api, user="whoisjones"):
-    """Publish the staged repo, renaming it first if the Hub name has changed.
-
-    `model.safetensors` already on the Hub is the released checkpoint and is
-    deliberately left untouched.
-    """
     source, target = spec["source"], f"{user}/{name}"
     if source != target:
         print(f"    renaming {source} -> {target}")
@@ -259,12 +272,16 @@ def push(name, spec, out_dir, api, user="whoisjones"):
         folder_path=str(out_dir),
         ignore_patterns=["model.safetensors"],
         commit_message="Self-contained transformers integration: predict() API, "
-                       "bundled tokenizers, calibrated threshold, new model card",
+        "bundled tokenizers, calibrated threshold, new model card",
     )
     for filename in STALE:
         if filename in existing:
-            api.delete_file(filename, repo_id=target, repo_type="model",
-                            commit_message=f"Remove superseded {filename}")
+            api.delete_file(
+                filename,
+                repo_id=target,
+                repo_type="model",
+                commit_message=f"Remove superseded {filename}",
+            )
             print(f"    removed stale {filename}")
     print(f"    pushed https://huggingface.co/{target}")
 
@@ -273,9 +290,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--only", nargs="*", choices=sorted(REPOS), default=sorted(REPOS))
-    parser.add_argument("--example", action="store_true",
-                        help="Run each model to put its real output in the model card. "
-                             "Requires model.safetensors in the staged directory.")
+    parser.add_argument(
+        "--example",
+        action="store_true",
+        help="Run each model to put its real output in the model card. "
+        "Requires model.safetensors in the staged directory.",
+    )
     parser.add_argument("--push", action="store_true", help="Publish the staged repos.")
     args = parser.parse_args()
 
