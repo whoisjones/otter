@@ -1,5 +1,5 @@
 import torch
-from .masks import compressed_all_spans_mask_cross_encoder, compressed_subwords_mask_cross_encoder
+from .masks import compressed_all_spans_mask_cross_encoder, compressed_subwords_mask_cross_encoder, first_text_token_index
 
 class EvalCollatorCrossEncoder:
     def __init__(self, tokenizer, label2id, max_seq_length=512, max_span_length=30, format='text', loss_masking='none'):
@@ -50,12 +50,8 @@ class EvalCollatorCrossEncoder:
         # boundary can get word_id=None (e.g. when the text starts with a string the
         # tokenizer treats as a special token), which shifts text_start_index by 1
         # and causes torch.stack to fail on mismatched shapes.
-        if self.loss_masking == 'subwords' and self.format == 'text':
-            _batch_text_start_index = 0
-            for _idx in range(len(offset_mapping[0])):
-                if int(offset_mapping[0][_idx][0]) >= self.label_offset:
-                    _batch_text_start_index = _idx
-                    break
+        if self.format == 'text':
+            _batch_text_start_index = first_text_token_index(offset_mapping, self.label_offset)
 
         annotations = {
             "ner": [],
@@ -90,7 +86,10 @@ class EvalCollatorCrossEncoder:
             else:
                 sequence_ids = token_encodings.sequence_ids(i)
                 offsets = offset_mapping[i]
-                text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, self.max_span_length, self.label_offset, offsets)
+                text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_all_spans_mask_cross_encoder(
+                    input_ids, sequence_ids, self.max_span_length, self.label_offset, offsets,
+                    text_start_index=_batch_text_start_index if self.format == 'text' else None,
+                )
 
             if not start_mask and not end_mask and not span_mask:
                 return {}

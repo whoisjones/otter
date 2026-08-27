@@ -1,3 +1,25 @@
+def first_text_token_index(offset_mapping, label_offset):
+    """First token index belonging to the text, shared by every sample in the batch.
+
+    The cross-encoder prepends a label prefix of `label_offset` characters. A token
+    belongs to the text once its END offset passes the prefix -- testing the START
+    offset instead skips the first text token whenever the tokenizer folds the
+    preceding whitespace into it (mmBERT and BPE tokenizers generally), which makes
+    the first word unreachable for both gold labels and predictions.
+
+    The minimum over the batch is taken because the token straddling the
+    prefix/text boundary can differ per sample; a per-sample index would produce
+    mismatched tensor shapes when the batch is stacked.
+    """
+    indices = []
+    for offsets in offset_mapping:
+        for idx in range(len(offsets)):
+            if int(offsets[idx][1]) > label_offset:
+                indices.append(idx)
+                break
+    return min(indices) if indices else 0
+
+
 def all_spans_mask(input_ids, sequence_ids, max_span_length):
     text_start_index = 0
     while sequence_ids[text_start_index] == None:
@@ -139,12 +161,25 @@ def compressed_subwords_mask(input_ids, word_ids, max_span_length):
 
     return text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths
 
-def compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, max_span_length, label_offset, offsets, has_threshold_token=False):
+def compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, max_span_length, label_offset, offsets, has_threshold_token=False, text_start_index=None):
     num_tokens = len(input_ids)
 
-    text_start_index = 0
-    while offsets[text_start_index][0] < label_offset or sequence_ids[text_start_index] is None:
-        text_start_index += 1
+    # Compare the token's END offset against the prefix length, not its start.
+    # Tokenizers that fold the preceding whitespace into the token (mmBERT, and
+    # BPE tokenizers generally) give the first text token a char-start of
+    # label_offset - 1, so a `start < label_offset` test skips it and makes the
+    # first word of the text unreachable for both labels and predictions.
+    #
+    # The caller passes a batch-wide text_start_index (see first_text_token_index):
+    # the label prefix is identical for every sample, but the token straddling the
+    # prefix/text boundary is not, so computing this per sample yields different
+    # values within one batch and torch.stack fails on mismatched shapes.
+    if text_start_index is None:
+        text_start_index = 0
+        while text_start_index < num_tokens and (
+            offsets[text_start_index][1] <= label_offset or sequence_ids[text_start_index] is None
+        ):
+            text_start_index += 1
 
     text_end_index = len(input_ids) - 1
     while sequence_ids[text_end_index] == None:

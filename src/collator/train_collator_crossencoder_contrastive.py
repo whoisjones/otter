@@ -1,7 +1,7 @@
 import random
 import torch
 import logging
-from .masks import compressed_all_spans_mask_cross_encoder, compressed_subwords_mask_cross_encoder
+from .masks import compressed_all_spans_mask_cross_encoder, compressed_subwords_mask_cross_encoder, first_text_token_index
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +66,7 @@ class TrainCollatorContrastiveCrossEncoder:
 
         if self.format == 'text':
             offset_mapping = token_encodings.pop("offset_mapping")
-            batch_text_start_index = 0
-            for idx in range(len(offset_mapping[0])):
-                if int(offset_mapping[0][idx][0]) >= label_offset:
-                    batch_text_start_index = idx
-                    break
+            batch_text_start_index = first_text_token_index(offset_mapping, label_offset)
 
         threshold_token_subword_position = [next(i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.token_encoder_tokenizer.convert_tokens_to_ids(self.threshold_token))]
         label_token_subword_positions = [i for i, input_id in enumerate(token_encodings['input_ids'][0]) if input_id == self.token_encoder_tokenizer.convert_tokens_to_ids("[LABEL]")]
@@ -107,7 +103,10 @@ class TrainCollatorContrastiveCrossEncoder:
             else:
                 sequence_ids = token_encodings.sequence_ids(i)
                 offsets = offset_mapping[i]
-                text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_all_spans_mask_cross_encoder(input_ids, sequence_ids, self.max_span_length, label_offset, offsets, has_threshold_token=True)
+                text_start_index, text_end_index, start_mask, end_mask, span_mask, spans_idx, span_lengths = compressed_all_spans_mask_cross_encoder(
+                    input_ids, sequence_ids, self.max_span_length, label_offset, offsets, has_threshold_token=True,
+                    text_start_index=batch_text_start_index if self.format == 'text' else None,
+                )
 
             span_lookup = {span: idx for idx, span in enumerate(spans_idx)}
             span_subword_indices = torch.tensor(spans_idx)
