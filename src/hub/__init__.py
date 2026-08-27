@@ -7,3 +7,7 @@
 # `publish_to_hub.py` has generated those from `src/` into a staging directory.
 # Importing them from inside this repository will therefore fail, by design --
 # it is what keeps the published copies from drifting away from `src/`.
+#
+# Those two files keep their docstrings, unlike the rest of this repository:
+# they are the public interface of the released models, and their docstrings
+# are what `help()` shows someone who only ever sees the Hub repository.
