@@ -140,6 +140,44 @@ Checkpoints land in `output_dir`; the best one by validation F1 is symlinked as
 `best_checkpoint`. A run whose `best_checkpoint` already exists exits immediately, so
 re-launching a finished job is a no-op.
 
+### Controlling the language mixture
+
+By default every sentence is equally likely to be sampled, so each language contributes
+in proportion to how much of it there is. Across the 91 languages of FiNERweb that
+spans 7k to 58k sentences, and the languages with the least data are often the ones that
+need the most exposure. `language_weights` multiplies a language's share of the draws:
+
+```json
+{
+  "train_file": "data/finerweb/*.jsonl",
+  "language_weights": {"tha": 10, "khm": 10, "cmn": 3}
+}
+```
+
+The language is read from the prefix of each example id (`tha_2200-s0`), which is how
+the per-language FiNERweb files are keyed. Languages left out keep weight 1, and
+omitting the field entirely samples uniformly.
+
+A weight is a multiplier on existing mass, not a target share, so what a language ends
+up with depends on how much data it already has. Check before committing to a run:
+
+```python
+from datasets import load_dataset
+from src.sampling import language_mixture
+
+dataset = load_dataset("json", data_files="data/finerweb/*.jsonl", split="train")
+mixture = language_mixture(dataset, {"tha": 10, "khm": 10, "cmn": 3})
+print({lang: f"{share:.1%}" for lang, share in mixture.items() if share > 0.02})
+```
+
+Weight 10 lifts Thai from 1.7% of FiNERweb to about 12%. `train.py` logs the resulting
+shares at startup, so every run records its own mixture. Naming a language that is not
+in the training data is an error rather than a silent no-op.
+
+Sampling is with replacement: an upweighted language repeats within an epoch rather
+than the other languages being dropped. Upweighting a few languages heavily does take
+exposure away from the rest, so evaluate on languages you did not touch as well.
+
 ## Evaluation
 
 `evaluate.py` infers the architecture from the checkpoint config.

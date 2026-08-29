@@ -28,6 +28,7 @@ from src.model import (
     OtterContrastiveCrossEncoderModel,
     OtterCrossEncoderModel,
 )
+from src.sampling import build_language_sampler, language_mixture
 from src.trainer import evaluate, train
 
 # Registry: architecture name -> (model class, train collator class, eval collator class)
@@ -356,10 +357,22 @@ def main():
     if training_args.do_train:
         if "train" not in dataset:
             raise ValueError("--do_train requires a train file.")
+        sampler = None
+        if data_args.language_weights:
+            sampler = build_language_sampler(dataset["train"], data_args.language_weights)
+            if accelerator.is_main_process:
+                mixture = language_mixture(dataset["train"], data_args.language_weights)
+                weighted = {
+                    language: f"{share:.1%}"
+                    for language, share in mixture.items()
+                    if language in data_args.language_weights
+                }
+                logger.info(f"Language-weighted sampling; shares: {weighted}")
         train_dataloader = DataLoader(
             dataset["train"],
             batch_size=training_args.per_device_train_batch_size,
-            shuffle=True,
+            sampler=sampler,
+            shuffle=sampler is None,
             collate_fn=train_collator,
             num_workers=0,
         )

@@ -169,6 +169,15 @@ class DataTrainingArguments:
         default="none",
         metadata={"help": "The method to mask the loss. Can be 'none', 'all_spans' or 'subwords'."},
     )
+    language_weights: dict[str, float] | None = field(
+        default=None,
+        metadata={
+            "help": "Sampling multipliers per language, keyed by the language prefix of the "
+            'example id, e.g. {"tha": 10, "cmn": 3}. A language holding 2% of the '
+            "sentences at weight 5 ends up near 10% of the draws; languages left out keep "
+            "weight 1. None samples the corpus uniformly."
+        },
+    )
 
     def __post_init__(self):
         if (
