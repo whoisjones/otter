@@ -56,6 +56,28 @@ for entity in entities:
 'Berlin'                  location        0.90
 ```
 
+The same call works in any of the supported languages -- the labels are free text and
+do not have to be in the language of the input:
+
+```python
+entities = model.predict(
+    "马云在杭州创办了阿里巴巴集团。",
+    labels=["person", "organization", "location"],
+)
+```
+
+```
+'马云'                    person          0.95
+'杭州'                    location        0.84
+'阿里巴巴集团'              organization    0.85
+```
+
+Scripts written without spaces between words -- Chinese, Japanese, Thai -- need no
+segmentation step: pass the sentence as it is written. Do not insert spaces between
+characters, and if your input arrives pre-tokenised, join it back into natural text
+first. A model given `马 云 在 杭 州` reads it as unrelated characters and scores far
+worse than on `马云在杭州`.
+
 Pass a list of strings to run on a batch; you get one list of entities per input, in
 the same order.
 
