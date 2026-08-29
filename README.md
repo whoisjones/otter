@@ -73,7 +73,6 @@ results = model.predict(texts, labels=["person", "location"], batch_size=16, thr
 train.py            training entry point, one config JSON per run
 evaluate.py         evaluation entry point, architecture inferred from the checkpoint
 publish_to_hub.py   builds and pushes the four Hub repositories
-smoke_test.py       dry-runs every architecture end to end
 configs/            one JSON per architecture
 src/args.py         ModelArguments / DataTrainingArguments / CustomTrainingArguments
 src/config.py       SpanModelConfig, shared by all four architectures
@@ -81,6 +80,7 @@ src/model/          bi-encoder, cross-encoder and their contrastive variants
 src/collator/       span enumeration, masking and label alignment
 src/loss.py         BCE, focal, dice, dice+focal and contrastive losses
 src/metrics.py      span decoding and micro/macro P/R/F1
+src/sampling.py     language-weighted sampling of the training mixture
 src/trainer.py      training and evaluation loops
 src/hub/            sources for the published `trust_remote_code` model repositories
 ```
@@ -220,11 +220,8 @@ python publish_to_hub.py --out-dir build/hub --example --push
 ```bash
 ruff format .        # formatting
 ruff check .         # linting
-python smoke_test.py # config loading plus a dry run of all four architectures
 ```
-
-The smoke test builds a two-layer BERT locally, so it needs no GPU and no checkpoint.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache 2.0 — see [LICENSE](LICENSE).
