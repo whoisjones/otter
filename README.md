@@ -1,9 +1,10 @@
-# 🦦 Otter — Universal Multilingual NER
+# What matters when building universal multiingual NER models?
 
-Otter is a span-based named entity recognizer that takes the entity types as *input*.
+This is the repository to our EMNLP paper in which we empirically compare various design choices to train universal NER models.
+Otter is the result of this: a span-based named entity recognizer that takes the entity types as *input*.
 Instead of a fixed tag set, you pass the types you care about in plain language —
 `person`, `Fußballverein`, `protein` — and the model returns the matching character
-spans. It works across languages without retraining.
+spans.
 
 Four pretrained models are published on the Hugging Face Hub, and this repository
 contains everything needed to train, evaluate and publish them.
