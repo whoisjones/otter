@@ -1,6 +1,6 @@
 # What matters when building universal multiingual NER models?
 
-This is the repository to our EMNLP paper in which we empirically compare various design choices to train universal NER models.
+This is the repository to our [EMNLP paper](https://arxiv.org/abs/2601.06347) in which we empirically compare various design choices to train universal NER models.
 Otter is the result of this: a span-based named entity recognizer that takes the entity types as *input*.
 Instead of a fixed tag set, you pass the types you care about in plain language —
 `person`, `Fußballverein`, `protein` — and the model returns the matching character
@@ -243,6 +243,21 @@ python publish_to_hub.py --out-dir build/hub --example --push
 ```bash
 ruff format .        # formatting
 ruff check .         # linting
+```
+
+##
+
+If you find this useful, please cite our work:
+```
+@misc{golde2026mattersbuildinguniversalmultilingual,
+      title={What Matters When Building Universal Multilingual Named Entity Recognition Models?}, 
+      author={Jonas Golde and Patrick Haller and Alan Akbik},
+      year={2026},
+      eprint={2601.06347},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2601.06347}, 
+}
 ```
 
 ## License
